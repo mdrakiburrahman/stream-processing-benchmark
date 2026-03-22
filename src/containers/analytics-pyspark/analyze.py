@@ -9,7 +9,6 @@ from pyspark.sql import SparkSession
 from delta import configure_spark_with_delta_pip
 
 RESULTS_DIR = "/opt/results"
-BIN_MS = 50
 
 
 def create_spark_session():
@@ -28,7 +27,9 @@ def create_spark_session():
 
 
 def load_timeseries(spark, delta_path, label):
-    """Read Delta table and return a binned time series DataFrame."""
+    """Read Delta table, aggregate to 1-second bins in Spark, return Pandas."""
+    from pyspark.sql import functions as F
+
     try:
         df = spark.read.format("delta").load(delta_path)
         if not df.head(1):
@@ -38,21 +39,19 @@ def load_timeseries(spark, delta_path, label):
         print(f"WARNING: Could not read {label} at {delta_path}: {e}")
         return None
 
-    pdf = df.select("ts", "latency_ms").toPandas()
-    print(f"{label}: loaded {len(pdf)} rows")
+    min_ts = df.agg(F.min("ts")).collect()[0][0]
+    binned = (
+        df.withColumn("elapsed_s",
+            F.floor((F.col("ts").cast("double") - F.lit(min_ts).cast("double"))).cast("int"))
+        .withColumn("latency_s", F.col("latency_ms") / 1000.0)
+        .groupBy("elapsed_s")
+        .agg(F.avg("latency_s").alias("latency_s"))
+        .orderBy("elapsed_s")
+    )
 
-    pdf = pdf.sort_values("ts").reset_index(drop=True)
-    ts = pd.to_datetime(pdf["ts"])
-    pdf["elapsed_s"] = (ts - ts.iloc[0]).dt.total_seconds()
-    pdf["latency_s"] = pdf["latency_ms"].astype(float) / 1000.0
-    pdf["bin"] = (pdf["elapsed_s"] * 1000 // BIN_MS).astype(int)
-
-    binned = pdf.groupby("bin").agg(
-        elapsed_s=("elapsed_s", "mean"),
-        latency_s=("latency_s", "mean"),
-    ).reset_index(drop=True)
-    binned["version"] = label
-    return binned
+    pdf = binned.toPandas()
+    pdf["version"] = label
+    return pdf
 
 
 def main():
@@ -75,13 +74,11 @@ def main():
         print("ERROR: No data available. Exiting.")
         sys.exit(1)
 
-    # Save combined time series CSV
     combined = pd.concat([s for s in [series_35, series_42] if s is not None], ignore_index=True)
     csv_path = os.path.join(RESULTS_DIR, "latency_timeseries.csv")
     combined.to_csv(csv_path, index=False)
     print(f"Time series saved to {csv_path}")
 
-    # Plot
     fig, ax = plt.subplots(figsize=(14, 7))
     for series, color in [(series_35, "blue"), (series_42, "red")]:
         if series is None:
