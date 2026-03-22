@@ -1,0 +1,69 @@
+services:
+  producer-csharp:
+    build: ./src/containers/producer-csharp
+    cpus: 4
+    mem_limit: 8g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health/ || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+    environment:
+      - EVENTHUB_CONNECTION_STRING
+      - EVENTHUB_NAME
+
+  spark-consumer-35:
+    build:
+      context: ./src/containers/spark-consumer
+      args:
+        SBT_IMAGE: "sbtscala/scala-sbt:eclipse-temurin-17.0.15_6_1.12.6_2.12.21"
+        SPARK_VERSION: "3.5.8"
+        SCALA_VERSION: "2.12.18"
+        DELTA_VERSION: "3.3.2"
+        HADOOP_VERSION: "3.3.4"
+    cpus: 12
+    mem_limit: 48g
+    environment:
+      - EVENTHUB_CONNECTION_STRING
+      - EVENTHUB_NAME
+      - ADLSG2_ACCOUNT_NAME
+      - ADLSG2_ACCOUNT_KEY
+      - ADLSG2_CONTAINER
+      - TRIGGER_TYPE=processing_time
+      - TRIGGER_INTERVAL=0 seconds
+      - CONSUMER_GROUP=spark35
+      - DELTA_TABLE_PATH=spark35/benchmark
+
+  spark-consumer-42:
+    build:
+      context: ./src/containers/spark-consumer
+      args:
+        SBT_IMAGE: "sbtscala/scala-sbt:eclipse-temurin-17.0.15_6_1.12.6_2.13.18"
+        SPARK_VERSION: "4.2.0-preview3"
+        SCALA_VERSION: "2.13.18"
+        DELTA_VERSION: "4.1.0"
+        HADOOP_VERSION: "3.4.1"
+    cpus: 12
+    mem_limit: 48g
+    environment:
+      - EVENTHUB_CONNECTION_STRING
+      - EVENTHUB_NAME
+      - ADLSG2_ACCOUNT_NAME
+      - ADLSG2_ACCOUNT_KEY
+      - ADLSG2_CONTAINER
+      - TRIGGER_TYPE=processing_time
+      - TRIGGER_INTERVAL=0 seconds
+      - CONSUMER_GROUP=spark42
+      - DELTA_TABLE_PATH=spark42/benchmark
+
+  analytics-pyspark:
+    build: ./src/containers/analytics-pyspark
+    volumes:
+      - ./results:/opt/results
+    environment:
+      - ADLSG2_ACCOUNT_NAME
+      - ADLSG2_ACCOUNT_KEY
+      - ADLSG2_CONTAINER
+      - DELTA_TABLE_PATH_35=spark35/benchmark
+      - DELTA_TABLE_PATH_42=spark42/benchmark
