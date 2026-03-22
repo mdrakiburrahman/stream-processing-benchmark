@@ -18,7 +18,7 @@ See [`contrib/README.md`](contrib/README.md).
 
 ```bash
 # Specify duration in seconds and run benchmark
-./src/.scripts/build-and-run.sh 180
+./src/.scripts/build-and-run.sh 120
 
 # → results/latency_chart.png, results/summary.csv
 ```
