@@ -27,19 +27,35 @@ graph LR
 
 See [`contrib/README.md`](contrib/README.md).
 
-## Prerequisites
+## Quickstart
 
-> TODO: Automate this with bicep and only prompt the user for Subscription ID and RG Name, fire a single "run.sh".
-
-1. Azure Event Hub with consumer groups `spark35` and `spark42`
-2. ADLS Gen2 storage account + container (HNS enabled)
-3. `cp .env.template .env` and fill in credentials
-
-## Usage
+Azure CLI (`az`) logged in with access to your target subscription:
 
 ```bash
-# Specify duration in seconds and run benchmark
+az login
+az account set -s <subscription-id>
+```
+
+### 1. Deploy Azure infrastructure
+
+```bash
+./src/infra/deploy.sh --subscription <subscription-id> --resource-group <rg-name>
+```
+
+This creates the Azure resource group (if needed), deploys Event Hubs and ADLS Gen2 via Bicep, and hydrates `.env` from `.env.template`.
+
+### 2. Run benchmark
+
+```bash
 ./src/.scripts/benchmark.sh 360
 ```
+
+### 3. Destroy infrastructure
+
+```bash
+./src/infra/destroy.sh --subscription <subscription-id> --resource-group <rg-name>
+```
+
+This deletes the resource group and all resources within, and removes `.env`.
 
 ![Results](results/latency_chart.png)
