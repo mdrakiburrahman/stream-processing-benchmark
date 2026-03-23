@@ -47,15 +47,17 @@ Run the benchmark, analyze the latency timeseries, tune Spark streaming paramete
 
 ### Tuning Knobs
 
+* You are **encouraged** to make the settings as aggressive as possible to pull out as much data out of Kafka as fast as possible - see:
+  - Docs: https://spark.apache.org/docs/latest/streaming/structured-streaming-kafka-integration.html
+  - Code: https://github.com/apache/spark/tree/master/connector/kafka-0-10-sql/src/main/scala/org/apache/spark/sql/kafka010
+
+  > Clone Spark locally here if not already cloned: `/home/mdrrahman/stream-processing-benchmark/.temp/spark`
+
 * You are **allowed** to change existing values and or introduce new values.
 * You are **encouraged** to aggressively pre-fetch from Kafka, since the consumer produces about 200K msgs/second.
 * You are **encouraged** to write Spark code that emits telemetry (e.g. log to console via Spark Listeners) to identify bottlenecks.
 
   > Container logs are stored here after each run for you to examine: `/home/mdrrahman/stream-processing-benchmark/.logs`
-
-* You are **encouraged** to make the settings as aggressive as possible to pull out as much data out of Kafka as fast as possible - see:
-  - Docs: https://spark.apache.org/docs/latest/streaming/structured-streaming-kafka-integration.html
-  - Code: https://github.com/apache/spark/tree/master/connector/kafka-0-10-sql/src/main/scala/org/apache/spark/sql/kafka010
 
 ---
 
