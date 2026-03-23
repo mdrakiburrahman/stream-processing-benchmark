@@ -76,8 +76,10 @@ Currently hardcoded in `StreamConsumer.scala` (candidates for externalization):
 | `spark.sql.parquet.compression.codec` | `snappy` | SparkSession config  |
 
 You are allowed to change existing values and or introduce new values.
-You are also allowed to write code that emits telemetry (e.g. to console via Spark Listeners) to identify bottlenecks. 
 You are encouraged to aggressively pre-fetch from Kafka, since the consumer produces about 200K msgs/second.
+You are also allowed to write Spark code that emits telemetry (e.g. log to console via Spark Listeners) to identify bottlenecks.
+
+> Container logs are stored here after each run for you to examine: `/home/mdrrahman/stream-processing-benchmark/.logs`
 
 ---
 
