@@ -16,7 +16,7 @@ Iterative tuning loop to achieve **< 5 second sustained latency** in Apache Spar
 
 **Hard constraints (ALL must be met simultaneously):**
 
-1. **Latency < 5 seconds** — every data point in `results/latency_timeseries.csv` must be below 5s. Never exceed.
+1. **Sustained latency < 5 seconds** — every data point in `results/latency_timeseries.csv` must be below 5s. Never exceed.
 2. **Keep up with producer** — the consumer must process messages at least as fast as the producer emits them. Latency must not trend upward over time.
 3. **Must write to ADLS Gen2** — Delta Lake writes to ADLS must remain functional. Do not disable or bypass the sink (e.g. by writing locally first).
 4. **Must not introduce changes that causes Spark Shuffles or slowdowns** — e.g. `repartition` force shuffles which slows down the microbatch.
@@ -59,6 +59,8 @@ Run the benchmark, analyze the latency timeseries, tune Spark streaming paramete
 
   > Container logs are stored here after each run for you to examine: `/home/mdrrahman/stream-processing-benchmark/.logs`
   > The general idea is, we must get our consumer to consume events FASTER than the producer can produce it.
+
+* Make small changes. If a change has improvement, make a note of it and keep it. If a change causes performance regressions, revert it.
 
 ---
 

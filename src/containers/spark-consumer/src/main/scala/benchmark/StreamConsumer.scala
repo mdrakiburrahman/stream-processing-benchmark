@@ -28,6 +28,8 @@ object StreamConsumer {
     val kafkaMinPartitions       = sys.env.getOrElse("KAFKA_MIN_PARTITIONS", "24")
     val abfsWriteRequestSize     = sys.env.getOrElse("ABFS_WRITE_REQUEST_SIZE", "8388608")
     val codegenEnabled           = sys.env.getOrElse("SPARK_CODEGEN_ENABLED", "true")
+    val minOffsetsPerTrigger     = sys.env.getOrElse("MIN_OFFSETS_PER_TRIGGER", "370000")
+    val maxTriggerDelay          = sys.env.getOrElse("MAX_TRIGGER_DELAY", "1s")
     val pollTimeoutMs            = sys.env.getOrElse("KAFKA_CONSUMER_POLL_TIMEOUT_MS", "120000")
     val fetchOffsetRetries       = sys.env.getOrElse("KAFKA_FETCH_OFFSET_NUM_RETRIES", "10")
     val fetchOffsetRetryMs       = sys.env.getOrElse("KAFKA_FETCH_OFFSET_RETRY_INTERVAL_MS", "10")
@@ -105,6 +107,8 @@ object StreamConsumer {
       .option("fetchOffset.numRetries", fetchOffsetRetries)
       .option("fetchOffset.retryIntervalMs", fetchOffsetRetryMs)
       .option("failOnDataLoss", failOnDataLoss)
+      .option("minOffsetsPerTrigger", minOffsetsPerTrigger)
+      .option("maxTriggerDelay", maxTriggerDelay)
       .load()
 
     val schema = new StructType()
