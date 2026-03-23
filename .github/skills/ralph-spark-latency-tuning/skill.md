@@ -58,6 +58,7 @@ Run the benchmark, analyze the latency timeseries, tune Spark streaming paramete
 * You are **encouraged** to write Spark code that emits telemetry (e.g. log to console via Spark Listeners) to identify bottlenecks.
 
   > Container logs are stored here after each run for you to examine: `/home/mdrrahman/stream-processing-benchmark/.logs`
+  > The general idea is, we must get our consumer to consume events FASTER than the producer can produce it.
 
 ---
 
