@@ -47,39 +47,11 @@ Run the benchmark, analyze the latency timeseries, tune Spark streaming paramete
 
 ### Tuning Knobs
 
-Current defaults in `docker-compose.yml` (`x-spark-tuning` anchor):
+* You are **allowed** to change existing values and or introduce new values.
+* You are **encouraged** to aggressively pre-fetch from Kafka, since the consumer produces about 200K msgs/second.
+* You are **encouraged** to write Spark code that emits telemetry (e.g. log to console via Spark Listeners) to identify bottlenecks.
 
-| Variable                          | Default            | Purpose                          |
-| --------------------------------- | ------------------ | -------------------------------- |
-| `SPARK_SHUFFLE_PARTITIONS`        | `4`                | Shuffle partitions for Spark SQL |
-| `KAFKA_MAX_POLL_RECORDS`          | `10000`            | Max records per Kafka poll       |
-| `KAFKA_FETCH_MAX_BYTES`           | `52428800` (50 MB) | Max total fetch size             |
-| `KAFKA_MAX_PARTITION_FETCH_BYTES` | `10485760` (10 MB) | Max bytes per partition fetch    |
-| `KAFKA_MIN_PARTITIONS`            | `32`               | Min Kafka source partitions      |
-| `ABFS_WRITE_REQUEST_SIZE`         | `8388608` (8 MB)   | ABFS write buffer size           |
-
-Per-service settings:
-
-| Variable           | Default     | Purpose                      |
-| ------------------ | ----------- | ---------------------------- |
-| `TRIGGER_INTERVAL` | `0 seconds` | Micro-batch trigger interval |
-| `cpus`             | `12`        | Container CPU allocation     |
-| `mem_limit`        | `48g`       | Container memory limit       |
-
-Currently hardcoded in `StreamConsumer.scala` (candidates for externalization):
-
-| Value                                 | Current  | Location             |
-| ------------------------------------- | -------- | -------------------- |
-| `kafka.request.timeout.ms`            | `60000`  | Kafka reader options |
-| `kafka.session.timeout.ms`            | `30000`  | Kafka reader options |
-| `startingOffsets`                     | `latest` | Kafka reader options |
-| `spark.sql.parquet.compression.codec` | `snappy` | SparkSession config  |
-
-You are allowed to change existing values and or introduce new values.
-You are encouraged to aggressively pre-fetch from Kafka, since the consumer produces about 200K msgs/second.
-You are also allowed to write Spark code that emits telemetry (e.g. log to console via Spark Listeners) to identify bottlenecks.
-
-> Container logs are stored here after each run for you to examine: `/home/mdrrahman/stream-processing-benchmark/.logs`
+  > Container logs are stored here after each run for you to examine: `/home/mdrrahman/stream-processing-benchmark/.logs`
 
 ---
 
