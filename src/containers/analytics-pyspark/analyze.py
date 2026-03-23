@@ -45,7 +45,7 @@ def load_timeseries(spark, delta_path, label):
             F.floor((F.col("ts").cast("double") - F.lit(min_ts).cast("double"))).cast("int"))
         .withColumn("latency_s", F.col("latency_ms") / 1000.0)
         .groupBy("elapsed_s")
-        .agg(F.avg("latency_s").alias("latency_s"))
+        .agg(F.avg("latency_s").alias("latency_s"), F.count("*").alias("msg_count"))
         .orderBy("elapsed_s")
     )
 
@@ -79,19 +79,26 @@ def main():
     combined.to_csv(csv_path, index=False)
     print(f"Time series saved to {csv_path}")
 
-    fig, ax = plt.subplots(figsize=(14, 7))
+    fig, (ax_lat, ax_thr) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
+
     for series, color in [(series_35, "blue"), (series_42, "red")]:
         if series is None:
             continue
         label = series["version"].iloc[0]
-        ax.plot(series["elapsed_s"], series["latency_s"],
-                color=color, label=label, linewidth=1.8, alpha=0.85)
+        ax_lat.plot(series["elapsed_s"], series["latency_s"], color=color, label=label, linewidth=1.8, alpha=0.85)
+        ax_thr.plot(series["elapsed_s"], series["msg_count"], color=color, label=label, linewidth=1.8, alpha=0.85)
 
-    ax.set_xlabel("Elapsed Time (seconds since first message)")
-    ax.set_ylabel("Latency (s)")
-    ax.set_title("E2E Latency: Spark 3.5 vs Spark 4.2")
-    ax.legend(fontsize=12)
-    ax.grid(True, alpha=0.3)
+    ax_lat.set_ylabel("Latency (s)")
+    ax_lat.set_title("E2E Latency: Spark 3.5 vs Spark 4.2")
+    ax_lat.legend(fontsize=12)
+    ax_lat.grid(True, alpha=0.3)
+
+    ax_thr.set_xlabel("Elapsed Time (seconds since first message)")
+    ax_thr.set_ylabel("Messages / second")
+    ax_thr.set_title("Throughput: Spark 3.5 vs Spark 4.2")
+    ax_thr.legend(fontsize=12)
+    ax_thr.grid(True, alpha=0.3)
+
     fig.tight_layout()
 
     chart_path = os.path.join(RESULTS_DIR, "latency_chart.png")

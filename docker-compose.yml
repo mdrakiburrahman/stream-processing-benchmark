@@ -48,6 +48,12 @@ services:
         HADOOP_VERSION: "3.3.4"
     cpus: 32
     mem_limit: 96g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 120
+      start_period: 30s
     environment:
       <<: *spark-tuning
       JAVA_TOOL_OPTIONS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -Xmx80g -Xms80g -XX:G1HeapRegionSize=16m -XX:ParallelGCThreads=8 -XX:ConcGCThreads=4"
@@ -72,6 +78,12 @@ services:
         HADOOP_VERSION: "3.4.1"
     cpus: 32
     mem_limit: 96g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 120
+      start_period: 30s
     environment:
       <<: *spark-tuning
       JAVA_TOOL_OPTIONS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -Xmx80g -Xms80g -XX:G1HeapRegionSize=16m -XX:ParallelGCThreads=8 -XX:ConcGCThreads=4"

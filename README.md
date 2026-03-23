@@ -1,6 +1,27 @@
 # Stream Processing Benchmark
 
-E2E latency benchmark: **Spark 3.5.8** vs **Spark 4.2.0-preview3** — Azure Event Hubs → Delta Lake on ADLS Gen2.
+E2E latency and throughput benchmark:
+
+```mermaid
+graph LR
+    subgraph Docker Compose
+        P[Producer<br/><i>C# .NET</i>]
+        S35[Spark Consumer<br/><i>Spark 3.5 / Scala 2.12</i>]
+        S42[Spark Consumer<br/><i>Spark 4.2 / Scala 2.13</i>]
+        A[Analytics<br/><i>PySpark</i>]
+    end
+
+    EH[Azure Event Hubs<br/><i>Kafka protocol</i>]
+    ADLS[(ADLS Gen2<br/><i>Delta Lake</i>)]
+
+    P -- "produce msgs" --> EH
+    EH -- "consumer group: spark35" --> S35
+    EH -- "consumer group: spark42" --> S42
+    S35 -- "write Delta" --> ADLS
+    S42 -- "write Delta" --> ADLS
+    ADLS -- "read Delta" --> A
+    A -- "latency &<br/>throughput charts" --> R[results/]
+```
 
 ## Dev Setup
 
@@ -18,7 +39,7 @@ See [`contrib/README.md`](contrib/README.md).
 
 ```bash
 # Specify duration in seconds and run benchmark
-./src/.scripts/build-and-run.sh 1200
+./src/.scripts/benchmark.sh 360
 ```
 
 ![Results](results/latency_chart.png)

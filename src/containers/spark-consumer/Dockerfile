@@ -23,6 +23,8 @@ RUN sbt -Dspark.version=$SPARK_VERSION \
 
 FROM eclipse-temurin:17-jre
 
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /app/target/scala-*/benchmark-assembly.jar /opt/benchmark.jar
 COPY entrypoint.sh /opt/entrypoint.sh
 RUN chmod +x /opt/entrypoint.sh

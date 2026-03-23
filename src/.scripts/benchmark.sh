@@ -35,6 +35,7 @@ run_spark() {
   echo "=== ${run_label}: ${consumer} for ${DURATION}s ==="
   docker compose up -d "$consumer"
   docker compose up -d producer-csharp
+  wait_healthy "$consumer"
   wait_healthy producer-csharp
   sleep "$DURATION"
   docker compose logs --no-color "$consumer" > "$LOGS_DIR/${consumer}.log" 2>&1

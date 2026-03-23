@@ -6,6 +6,8 @@ import org.apache.spark.sql.types._
 import org.apache.spark.sql.streaming.Trigger
 import org.apache.spark.sql.streaming.StreamingQueryListener
 import org.apache.spark.sql.streaming.StreamingQueryListener._
+import java.util.concurrent.atomic.AtomicBoolean
+import org.apache.hadoop.fs.Path
 
 object StreamConsumer {
   def main(args: Array[String]): Unit = {
@@ -93,6 +95,51 @@ object StreamConsumer {
     })
 
     println(s"Writing to: $deltaPath")
+
+    val healthPort = sys.env.getOrElse("HEALTH_PORT", "8080").toInt
+    val deltaTableReady = new AtomicBoolean(false)
+    val hadoopConf = spark.sparkContext.hadoopConfiguration
+    val deltaLogPath = new Path(s"$deltaPath/_delta_log")
+
+    val healthThread = new Thread("health-probe") {
+      override def run(): Unit = {
+        val server = new java.net.ServerSocket(healthPort)
+        server.setReuseAddress(true)
+        println(s"Health probe listening on port $healthPort")
+        while (!isInterrupted) {
+          try {
+            val client = server.accept()
+            try {
+              val in = new java.io.BufferedReader(new java.io.InputStreamReader(client.getInputStream))
+              var line = in.readLine()
+              while (line != null && !line.isEmpty) line = in.readLine()
+
+              if (!deltaTableReady.get()) {
+                val fs = deltaLogPath.getFileSystem(hadoopConf)
+                deltaTableReady.set(fs.exists(deltaLogPath))
+              }
+
+              val (status, body) = if (deltaTableReady.get())
+                ("200 OK", "ok")
+              else
+                ("503 Service Unavailable", "waiting for delta table")
+              val bodyBytes = body.getBytes("UTF-8")
+              val header = s"HTTP/1.1 $status\r\nContent-Length: ${bodyBytes.length}\r\nConnection: close\r\n\r\n"
+              val os = client.getOutputStream
+              os.write(header.getBytes("UTF-8"))
+              os.write(bodyBytes)
+              os.flush()
+            } finally {
+              client.close()
+            }
+          } catch {
+            case _: Exception =>
+          }
+        }
+      }
+    }
+    healthThread.setDaemon(true)
+    healthThread.start()
 
     val kafkaDF = spark.readStream
       .format("kafka")
