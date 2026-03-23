@@ -9,6 +9,41 @@ LOGS_DIR=".logs"
 [[ -f .env ]] || { echo "Error: Copy .env.template to .env and fill in values"; exit 1; }
 source .env
 
+wait_healthy() {
+  local service=$1
+  echo -n "Waiting for $service to be healthy..."
+  until [ "$(docker inspect --format='{{.State.Health.Status}}' "$(docker compose ps -q "$service")")" = "healthy" ]; do
+    echo -n "."
+    sleep 2
+  done
+  echo " ready!"
+}
+
+clean_adls_dir() {
+  local dir_name=$1
+  az storage fs directory delete \
+    --account-name "$ADLSG2_ACCOUNT_NAME" \
+    --account-key "$ADLSG2_ACCOUNT_KEY" \
+    --file-system "$ADLSG2_CONTAINER" \
+    --name "$dir_name" -y 2>/dev/null || true
+}
+
+run_spark() {
+  local consumer=$1
+  local run_label=$2
+
+  echo "=== ${run_label}: ${consumer} for ${DURATION}s ==="
+  docker compose up -d "$consumer"
+  docker compose up -d producer-csharp
+  wait_healthy producer-csharp
+  sleep "$DURATION"
+  docker compose logs --no-color "$consumer" > "$LOGS_DIR/${consumer}.log" 2>&1
+  docker compose logs --no-color producer-csharp > "$LOGS_DIR/producer-csharp-${consumer}.log" 2>&1
+  docker compose stop "$consumer" producer-csharp
+  docker compose rm -f "$consumer" producer-csharp
+  echo "${run_label} complete."
+}
+
 rm -rf "$LOGS_DIR"
 mkdir -p "$LOGS_DIR"
 
@@ -16,48 +51,16 @@ echo "=== Tearing down any running containers ==="
 docker compose down --remove-orphans 2>/dev/null || true
 
 echo "=== Cleaning ADLS Gen2 data ==="
-az storage fs directory delete \
-  --account-name "$ADLSG2_ACCOUNT_NAME" \
-  --account-key "$ADLSG2_ACCOUNT_KEY" \
-  --file-system "$ADLSG2_CONTAINER" \
-  --name spark35 -y 2>/dev/null || true
-az storage fs directory delete \
-  --account-name "$ADLSG2_ACCOUNT_NAME" \
-  --account-key "$ADLSG2_ACCOUNT_KEY" \
-  --file-system "$ADLSG2_CONTAINER" \
-  --name spark42 -y 2>/dev/null || true
+clean_adls_dir spark35
+clean_adls_dir spark42
 echo "ADLS cleaned."
 
 echo "=== Building images ==="
 docker compose build
 
-echo "=== Starting producer ==="
-docker compose up -d producer-csharp
-echo -n "Waiting for producer to be healthy..."
-until [ "$(docker inspect --format='{{.State.Health.Status}}' "$(docker compose ps -q producer-csharp)")" = "healthy" ]; do
-  echo -n "."
-  sleep 2
-done
-echo " ready!"
+run_spark spark-consumer-35 "Run 1"
+run_spark spark-consumer-42 "Run 2"
 
-echo "=== Run 1: Spark 3.5 for ${DURATION}s ==="
-docker compose up -d spark-consumer-35
-sleep "$DURATION"
-docker compose logs --no-color spark-consumer-35 > "$LOGS_DIR/spark-consumer-35.log" 2>&1
-docker compose stop spark-consumer-35
-docker compose rm -f spark-consumer-35
-echo "Spark 3.5 run complete."
-
-echo "=== Run 2: Spark 4.2 for ${DURATION}s ==="
-docker compose up -d spark-consumer-42
-sleep "$DURATION"
-docker compose logs --no-color spark-consumer-42 > "$LOGS_DIR/spark-consumer-42.log" 2>&1
-docker compose stop spark-consumer-42
-docker compose rm -f spark-consumer-42
-echo "Spark 4.2 run complete."
-
-echo "=== Stopping producer ==="
-docker compose logs --no-color producer-csharp > "$LOGS_DIR/producer-csharp.log" 2>&1
 docker compose down
 
 echo "=== Running analytics ==="

@@ -28,7 +28,8 @@ object StreamConsumer {
     val kafkaMinPartitions       = sys.env.getOrElse("KAFKA_MIN_PARTITIONS", "24")
     val abfsWriteRequestSize     = sys.env.getOrElse("ABFS_WRITE_REQUEST_SIZE", "8388608")
     val codegenEnabled           = sys.env.getOrElse("SPARK_CODEGEN_ENABLED", "true")
-    val minOffsetsPerTrigger     = sys.env.getOrElse("MIN_OFFSETS_PER_TRIGGER", "370000")
+    val minOffsetsPerTrigger     = sys.env.getOrElse("MIN_OFFSETS_PER_TRIGGER", "1")
+    val maxOffsetsPerTrigger     = sys.env.getOrElse("MAX_OFFSETS_PER_TRIGGER", "400000")
     val maxTriggerDelay          = sys.env.getOrElse("MAX_TRIGGER_DELAY", "1s")
     val pollTimeoutMs            = sys.env.getOrElse("KAFKA_CONSUMER_POLL_TIMEOUT_MS", "120000")
     val fetchOffsetRetries       = sys.env.getOrElse("KAFKA_FETCH_OFFSET_NUM_RETRIES", "10")
@@ -67,6 +68,11 @@ object StreamConsumer {
       .config("spark.kafka.consumer.cache.capacity", consumerCacheCapacity)
       .getOrCreate()
 
+    val schema = new StructType()
+      .add("ts", StringType)
+      .add("producer_id", IntegerType)
+      .add("seq", LongType)
+
     spark.streams.addListener(new StreamingQueryListener {
       override def onQueryStarted(event: QueryStartedEvent): Unit =
         println(s"[TELEMETRY] Query started: id=${event.id}")
@@ -76,8 +82,11 @@ object StreamConsumer {
         println(f"[TELEMETRY] Batch ${p.batchId}: records=${p.numInputRows}, " +
           f"processedRows/s=${p.processedRowsPerSecond}%.0f, " +
           f"triggerMs=${d.get("triggerExecution")}, " +
+          f"latestOffsetMs=${d.get("latestOffset")}, " +
+          f"getBatchMs=${d.get("getBatch")}, " +
           f"addBatchMs=${d.get("addBatch")}, " +
-          f"commitMs=${d.get("commitOffsets")}")
+          f"commitMs=${d.get("commitOffsets")}, " +
+          f"walCommitMs=${d.get("walCommit")}")
       }
       override def onQueryTerminated(event: QueryTerminatedEvent): Unit =
         println(s"[TELEMETRY] Query terminated: id=${event.id}")
@@ -108,21 +117,17 @@ object StreamConsumer {
       .option("fetchOffset.retryIntervalMs", fetchOffsetRetryMs)
       .option("failOnDataLoss", failOnDataLoss)
       .option("minOffsetsPerTrigger", minOffsetsPerTrigger)
+      .option("maxOffsetsPerTrigger", maxOffsetsPerTrigger)
       .option("maxTriggerDelay", maxTriggerDelay)
       .load()
-
-    val schema = new StructType()
-      .add("ts", StringType)
-      .add("producer_id", IntegerType)
-      .add("seq", LongType)
 
     val parsed = kafkaDF
       .selectExpr("CAST(value AS STRING) as json_str")
       .select(from_json(col("json_str"), schema).as("data"))
-      .select("data.*")
-      .withColumn("ts", to_timestamp(col("ts")))
-      .withColumn("adls_ingest_time", current_timestamp())
-      .withColumn("latency_ms", ((col("adls_ingest_time").cast("double") - col("ts").cast("double")) * 1000).cast("long"))
+      .select(col("data.ts").as("ts_str"))
+      .withColumn("ts", to_timestamp(col("ts_str")))
+      .withColumn("latency_ms", ((current_timestamp().cast("double") - col("ts").cast("double")) * 1000).cast("long"))
+      .select("ts", "latency_ms")
 
     parsed.coalesce(outputCoalescePartitions).writeStream
       .format("delta")
