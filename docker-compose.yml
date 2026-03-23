@@ -47,7 +47,7 @@ services:
         DELTA_VERSION: "3.3.2"
         HADOOP_VERSION: "3.3.4"
     cpus: 32
-    mem_limit: 96g
+    mem_limit: 128g
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
       interval: 5s
@@ -77,7 +77,7 @@ services:
         DELTA_VERSION: "4.1.0"
         HADOOP_VERSION: "3.4.1"
     cpus: 32
-    mem_limit: 96g
+    mem_limit: 128g
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
       interval: 5s
