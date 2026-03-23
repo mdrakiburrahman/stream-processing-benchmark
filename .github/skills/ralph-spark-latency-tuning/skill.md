@@ -53,6 +53,8 @@ Run the benchmark, analyze the latency timeseries, tune Spark streaming paramete
 
   > Container logs are stored here after each run for you to examine: `/home/mdrrahman/stream-processing-benchmark/.logs`
 
+* You are **encouraged** to make the settings as aggressive as possible to pull out as much data out of Kafka as fast as possible - see https://spark.apache.org/docs/latest/streaming/structured-streaming-kafka-integration.html
+
 ---
 
 ## Step 0: Baseline Run
