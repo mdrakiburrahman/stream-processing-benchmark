@@ -1,10 +1,20 @@
 x-spark-tuning: &spark-tuning
   SPARK_SHUFFLE_PARTITIONS: "4"
-  KAFKA_MAX_POLL_RECORDS: "10000"
-  KAFKA_FETCH_MAX_BYTES: "52428800"
-  KAFKA_MAX_PARTITION_FETCH_BYTES: "10485760"
-  KAFKA_MIN_PARTITIONS: "32"
+  KAFKA_MAX_POLL_RECORDS: "100000"
+  KAFKA_FETCH_MAX_BYTES: "104857600"
+  KAFKA_MAX_PARTITION_FETCH_BYTES: "20971520"
+  KAFKA_MIN_PARTITIONS: "8"
   ABFS_WRITE_REQUEST_SIZE: "8388608"
+  SPARK_CODEGEN_ENABLED: "true"
+  MAX_OFFSETS_PER_TRIGGER: "5000000"
+  MIN_OFFSETS_PER_TRIGGER: "500000"
+  MAX_TRIGGER_DELAY: "15s"
+  KAFKA_CONSUMER_POLL_TIMEOUT_MS: "30000"
+  KAFKA_FETCH_OFFSET_NUM_RETRIES: "5"
+  KAFKA_FETCH_OFFSET_RETRY_INTERVAL_MS: "10"
+  FAIL_ON_DATA_LOSS: "false"
+  OUTPUT_COALESCE_PARTITIONS: "4"
+  ABFS_WRITE_MAX_CONCURRENT: "24"
 
 services:
   producer-csharp:
@@ -42,6 +52,7 @@ services:
       TRIGGER_INTERVAL: "0 seconds"
       CONSUMER_GROUP: spark35
       DELTA_TABLE_PATH: spark35/benchmark
+      CHECKPOINT_PATH: "/tmp/spark-checkpoint"
 
   spark-consumer-42:
     build:
@@ -64,6 +75,7 @@ services:
       TRIGGER_INTERVAL: "0 seconds"
       CONSUMER_GROUP: spark42
       DELTA_TABLE_PATH: spark42/benchmark
+      CHECKPOINT_PATH: "/tmp/spark-checkpoint"
 
   analytics-pyspark:
     build: ./src/containers/analytics-pyspark
