@@ -19,6 +19,7 @@ Iterative tuning loop to achieve **< 5 second sustained latency** in Apache Spar
 1. **Latency < 5 seconds** — every data point in `results/latency_timeseries.csv` must be below 5s. Never exceed.
 2. **Keep up with producer** — the consumer must process messages at least as fast as the producer emits them. Latency must not trend upward over time.
 3. **Must write to ADLS Gen2** — Delta Lake writes to ADLS must remain functional. Do not disable or bypass the sink (e.g. by writing locally first).
+4. **Must not introduce changes that causes Spark Shuffles or slowdowns** — e.g. `repartition` force shuffles which slows down the microbatch.
 
 **Allowed files — you may ONLY modify these two files:**
 
@@ -76,6 +77,7 @@ Currently hardcoded in `StreamConsumer.scala` (candidates for externalization):
 
 You are allowed to change existing values and or introduce new values.
 You are also allowed to write code that emits telemetry (e.g. to console via Spark Listeners) to identify bottlenecks. 
+You are encouraged to aggressively pre-fetch from Kafka, since the consumer produces about 200K msgs/second.
 
 ---
 

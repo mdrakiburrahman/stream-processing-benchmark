@@ -1,3 +1,4 @@
 .temp/*
 .env
+.logs/
 !results/.gitkeep
