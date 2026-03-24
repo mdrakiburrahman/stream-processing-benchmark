@@ -7,12 +7,16 @@ param location string = resourceGroup().location
 @description('Unique suffix for globally-unique resource names (e.g. timestamp)')
 param suffix string
 
+@description('Number of Event Hub partitions (default: host core count or 100)')
+param partitionCount int = 100
+
 // ── Event Hub ────────────────────────────────────────────────────
 module eventHub 'modules/eventhub.bicep' = {
   name: 'eventhub-${suffix}'
   params: {
     location: location
     suffix: suffix
+    partitionCount: partitionCount
   }
 }
 
