@@ -1,12 +1,12 @@
 ---
 name: ralph-streaming-latency-tuning
-description: "Iteratively tune Spark Structured Streaming and Flink DataStream pipelines until end-to-end latency stays below 5 seconds while keeping up with producer throughput and writing to ADLS Gen2."
+description: "Iteratively tune Spark Structured Streaming, Flink DataStream, and Feldera IVM pipelines until end-to-end latency stays below 5 seconds while keeping up with producer throughput and writing to ADLS Gen2."
 user-invocable: true
 ---
 
 # Streaming Latency Tuning Loop
 
-Iterative tuning loop to achieve **< 5 second sustained latency** in Apache Spark Structured Streaming **and** Apache Flink DataStream.
+Iterative tuning loop to achieve **< 5 second sustained latency** in Apache Spark Structured Streaming, Apache Flink DataStream, **and** Feldera IVM.
 
 ---
 
@@ -14,7 +14,7 @@ Iterative tuning loop to achieve **< 5 second sustained latency** in Apache Spar
 
 **NEVER `git add` or `git commit`** — all changes will be reviewed, committed and pushed by a human.
 
-**Hard constraints (ALL must be met simultaneously for every consumer — Spark 3.5, Spark 4.2, and Flink 1.16):**
+**Hard constraints (ALL must be met simultaneously for every consumer — Spark 3.5, Spark 4.2, Flink 1.16, and Feldera):**
 
 1. **Sustained latency < 5 seconds** — every data point in `results/latency_timeseries.csv` must be below 5s. Never exceed.
 2. **Keep up with producer** — the consumer must process messages at least as fast as the producer emits them. Latency must not trend upward over time.
@@ -26,6 +26,7 @@ Iterative tuning loop to achieve **< 5 second sustained latency** in Apache Spar
 1. `docker-compose.yml` — tuning knobs in `x-spark-tuning` and `x-flink-tuning`, per-service env vars, container resources (`cpus`, `mem_limit`)
 2. `src/containers/spark-consumer/src/main/scala/benchmark/StreamConsumer.scala` — Spark/Kafka/Delta configuration
 3. `src/containers/flink-consumer/src/main/java/benchmark/FlinkStreamConsumer.java` — Flink/Kafka/Delta configuration
+4. `src/.scripts/feldera-pipeline.py` — Feldera pipeline SQL program, runtime config, connector config
 
 **No magic numbers in application code** — if you tune a hardcoded value in `StreamConsumer.scala` or `FlinkStreamConsumer.java`, you MUST externalize it as an environment variable (Scala: `sys.env.getOrElse("VAR_NAME", "default")`; Java: `env("VAR_NAME", "default")`) and place the default in `docker-compose.yml` under `x-spark-tuning` or `x-flink-tuning` respectively.
 
@@ -65,6 +66,22 @@ Run the benchmark, analyze the latency timeseries for all three consumers (Spark
 
   > Clone Flink locally here if not already cloned: `/home/mdrrahman/stream-processing-benchmark/.temp/flink`
 
+### Feldera Tuning Knobs
+
+* Feldera uses Incremental View Maintenance (IVM) — it processes input changes incrementally rather than reprocessing entire datasets. Latency is driven by Kafka ingestion speed, IVM engine step time, and Delta Lake output flushing.
+* The Feldera pipeline configuration lives in `src/.scripts/feldera-pipeline.py`. Edit the `runtime_config` dict and connector configs there.
+* Key tuning parameters (in `feldera-pipeline.py`):
+  - `runtime_config.workers` — Number of DBSP worker threads (default 16, sweet spot 4-16)
+  - `runtime_config.min_batch_size_records` — Minimum records before processing a batch (default 0)
+  - `runtime_config.max_buffering_delay_usecs` — Max delay waiting for batch fill (default 0)
+  - `max_output_buffer_time_millis` — Delta Lake output flush interval in ms (default 1000)
+  - Kafka connector `poller_threads` — Number of parallel Kafka poll threads (default 3)
+* You are **encouraged** to tune these aggressively for maximum throughput and minimum latency.
+* Feldera docs: https://docs.feldera.com/
+  - Runtime config: https://docs.feldera.com/api/list-pipelines (runtime_config section)
+  - Kafka connector: https://docs.feldera.com/connectors/sources/kafka
+  - Delta Lake sink: https://docs.feldera.com/connectors/sinks/delta
+
 ### General Guidance (applies to both Spark and Flink)
 
 * You are **allowed** to change existing values and or introduce new values.
@@ -93,7 +110,7 @@ Then examine the results:
 cat results/latency_timeseries.csv
 ```
 
-Record the baseline for each consumer version (`Spark 3.5`, `Spark 4.2`, `Flink 1.16`):
+Record the baseline for each consumer version (`Spark 3.5`, `Spark 4.2`, `Flink 1.16`, `Feldera`):
 
 - **Max latency** observed (per version)
 - **Sawtooth pattern** — does latency spike and recover cyclically?
@@ -159,7 +176,7 @@ After the run completes, validate ALL constraints **for every version**:
 cat results/latency_timeseries.csv
 ```
 
-**Check each constraint (for Spark 3.5, Spark 4.2, AND Flink 1.16):**
+**Check each constraint (for Spark 3.5, Spark 4.2, Flink 1.16, AND Feldera):**
 
 1. **Max latency < 5s**: Scan the `latency_s` column — every single value must be below 5, for every version.
 2. **No upward trend**: Latency should be stable or decreasing over time, not climbing.
@@ -173,7 +190,7 @@ If ANY constraint fails for ANY version, return to Step 2 with the new data and 
 
 **CRITICAL: You MUST emit exactly one of these JSON objects as the absolute last line of your output.**
 
-If ALL constraints are met for ALL consumers (every latency reading < 5s, no upward trend, ADLS writes working):
+If ALL constraints are met for ALL consumers including Feldera (every latency reading < 5s, no upward trend, ADLS writes working):
 
 ```
 { "status": "Succeeded" }

@@ -133,6 +133,21 @@ services:
       DELTA_TABLE_PATH: flink1.16/benchmark
       CHECKPOINT_PATH: "/tmp/flink-checkpoint"
 
+  feldera-consumer:
+    image: images.feldera.com/feldera/pipeline-manager:latest
+    tty: true
+    cpus: 32
+    mem_limit: 128g
+    ports:
+      - "8090:8080"
+    stop_grace_period: 0s
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/healthz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 120
+      start_period: 10s
+
   analytics-pyspark:
     build: ./src/containers/analytics-pyspark
     cpus: 32
@@ -146,5 +161,6 @@ services:
       - DELTA_TABLE_PATH_35=spark35/benchmark
       - DELTA_TABLE_PATH_42=spark42/benchmark
       - DELTA_TABLE_PATH_FLINK116=flink1.16/benchmark
+      - DELTA_TABLE_PATH_FELDERA=feldera/benchmark
       - RESOURCE_STATS_PATH=resource_stats/resource_stats.csv
       - SPARK_DRIVER_MEMORY=64g
