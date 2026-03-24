@@ -14,11 +14,13 @@ RESULTS_DIR = "/opt/results"
 def create_spark_session():
     account_name = os.environ["ADLSG2_ACCOUNT_NAME"]
     account_key = os.environ["ADLSG2_ACCOUNT_KEY"]
+    driver_memory = os.environ.get("SPARK_DRIVER_MEMORY", "64g")
 
     builder = (
         SparkSession.builder
         .appName("BenchmarkAnalytics")
         .master("local[*]")
+        .config("spark.driver.memory", driver_memory)
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
         .config(f"spark.hadoop.fs.azure.account.key.{account_name}.dfs.core.windows.net", account_key)
@@ -61,27 +63,30 @@ def main():
     container = os.environ["ADLSG2_CONTAINER"]
     abfs_base = f"abfs://{container}@{account_name}.dfs.core.windows.net"
 
-    path_35 = os.environ.get("DELTA_TABLE_PATH_35", "spark35/benchmark")
-    path_42 = os.environ.get("DELTA_TABLE_PATH_42", "spark42/benchmark")
+    path_35      = os.environ.get("DELTA_TABLE_PATH_35", "spark35/benchmark")
+    path_42      = os.environ.get("DELTA_TABLE_PATH_42", "spark42/benchmark")
+    path_flink116 = os.environ.get("DELTA_TABLE_PATH_FLINK116", "flink1.16/benchmark")
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
-    series_35 = load_timeseries(spark, f"{abfs_base}/{path_35}", "Spark 3.5")
-    series_42 = load_timeseries(spark, f"{abfs_base}/{path_42}", "Spark 4.2")
+    series_35       = load_timeseries(spark, f"{abfs_base}/{path_35}", "Spark 3.5")
+    series_42       = load_timeseries(spark, f"{abfs_base}/{path_42}", "Spark 4.2")
+    series_flink116 = load_timeseries(spark, f"{abfs_base}/{path_flink116}", "Flink 1.16")
     spark.stop()
 
-    if series_35 is None and series_42 is None:
+    all_series = [series_35, series_42, series_flink116]
+    if all(s is None for s in all_series):
         print("ERROR: No data available. Exiting.")
         sys.exit(1)
 
-    combined = pd.concat([s for s in [series_35, series_42] if s is not None], ignore_index=True)
+    combined = pd.concat([s for s in all_series if s is not None], ignore_index=True)
     csv_path = os.path.join(RESULTS_DIR, "latency_timeseries.csv")
     combined.to_csv(csv_path, index=False)
     print(f"Time series saved to {csv_path}")
 
     fig, (ax_lat, ax_thr) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
 
-    for series, color in [(series_35, "blue"), (series_42, "red")]:
+    for series, color in [(series_35, "blue"), (series_42, "red"), (series_flink116, "green")]:
         if series is None:
             continue
         label = series["version"].iloc[0]
@@ -89,13 +94,13 @@ def main():
         ax_thr.plot(series["elapsed_s"], series["msg_count"], color=color, label=label, linewidth=1.8, alpha=0.85)
 
     ax_lat.set_ylabel("Latency (s)")
-    ax_lat.set_title("E2E Latency: Spark 3.5 vs Spark 4.2")
+    ax_lat.set_title("E2E Latency: Spark 3.5 vs Spark 4.2 vs Flink 1.16")
     ax_lat.legend(fontsize=12)
     ax_lat.grid(True, alpha=0.3)
 
     ax_thr.set_xlabel("Elapsed Time (seconds since first message)")
     ax_thr.set_ylabel("Messages / second")
-    ax_thr.set_title("Throughput: Spark 3.5 vs Spark 4.2")
+    ax_thr.set_title("Throughput: Spark 3.5 vs Spark 4.2 vs Flink 1.16")
     ax_thr.legend(fontsize=12)
     ax_thr.grid(True, alpha=0.3)
 

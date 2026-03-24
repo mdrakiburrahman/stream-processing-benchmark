@@ -12,11 +12,30 @@ source .env
 wait_healthy() {
   local service=$1
   echo -n "Waiting for $service to be healthy..."
-  until [ "$(docker inspect --format='{{.State.Health.Status}}' "$(docker compose ps -q "$service")")" = "healthy" ]; do
+  while true; do
+    local cid
+    cid=$(docker compose ps -q "$service" 2>/dev/null)
+    if [[ -z "$cid" ]]; then
+      echo " FAILED (container not found)"
+      echo "ERROR: $service exited before becoming healthy. Check $LOGS_DIR/${service}.log"
+      return 1
+    fi
+    local state
+    state=$(docker inspect --format='{{.State.Status}}' "$cid" 2>/dev/null || echo "missing")
+    if [[ "$state" == "exited" || "$state" == "dead" || "$state" == "missing" ]]; then
+      echo " FAILED (container $state)"
+      echo "ERROR: $service exited before becoming healthy. Check $LOGS_DIR/${service}.log"
+      return 1
+    fi
+    local health
+    health=$(docker inspect --format='{{.State.Health.Status}}' "$cid" 2>/dev/null || echo "none")
+    if [[ "$health" == "healthy" ]]; then
+      echo " ready!"
+      return 0
+    fi
     echo -n "."
     sleep 2
   done
-  echo " ready!"
 }
 
 clean_adls_dir() {
@@ -28,20 +47,30 @@ clean_adls_dir() {
     --name "$dir_name" -y 2>/dev/null || true
 }
 
-run_spark() {
+run_consumer() {
   local consumer=$1
   local run_label=$2
 
   echo "=== ${run_label}: ${consumer} for ${DURATION}s ==="
   docker compose up -d "$consumer"
   docker compose up -d producer-csharp
+
+  docker compose logs -f --no-color "$consumer"      >> "$LOGS_DIR/${consumer}.log" 2>&1 &
+  local log_pid_consumer=$!
+  docker compose logs -f --no-color producer-csharp   >> "$LOGS_DIR/producer-csharp-${consumer}.log" 2>&1 &
+  local log_pid_producer=$!
+
   wait_healthy "$consumer"
   wait_healthy producer-csharp
   sleep "$DURATION"
-  docker compose logs --no-color "$consumer" > "$LOGS_DIR/${consumer}.log" 2>&1
-  docker compose logs --no-color producer-csharp > "$LOGS_DIR/producer-csharp-${consumer}.log" 2>&1
+
   docker compose stop "$consumer" producer-csharp
   docker compose rm -f "$consumer" producer-csharp
+
+  sleep 2
+  kill "$log_pid_consumer" "$log_pid_producer" 2>/dev/null || true
+  wait "$log_pid_consumer" "$log_pid_producer" 2>/dev/null || true
+
   echo "${run_label} complete."
 }
 
@@ -52,6 +81,7 @@ echo "=== Tearing down any running containers ==="
 docker compose down --remove-orphans 2>/dev/null || true
 
 echo "=== Cleaning ADLS Gen2 data ==="
+clean_adls_dir flink1.16
 clean_adls_dir spark35
 clean_adls_dir spark42
 echo "ADLS cleaned."
@@ -59,8 +89,9 @@ echo "ADLS cleaned."
 echo "=== Building images ==="
 docker compose build
 
-run_spark spark-consumer-35 "Run 1"
-run_spark spark-consumer-42 "Run 2"
+run_consumer flink-consumer-116 "Run 1"
+run_consumer spark-consumer-35 "Run 2"
+run_consumer spark-consumer-42 "Run 3"
 
 docker compose down
 

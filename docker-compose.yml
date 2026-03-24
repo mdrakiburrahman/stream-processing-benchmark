@@ -22,6 +22,20 @@ x-spark-tuning: &spark-tuning
   KAFKA_SESSION_TIMEOUT_MS: "60000"
   CONSUMER_CACHE_CAPACITY: "2560"
 
+x-flink-tuning: &flink-tuning
+  FLINK_PARALLELISM: "24"
+  CHECKPOINT_INTERVAL_MS: "5000"
+  KAFKA_MAX_POLL_RECORDS: "50000000"
+  KAFKA_FETCH_MAX_BYTES: "2097152000"
+  KAFKA_MAX_PARTITION_FETCH_BYTES: "1048576000"
+  ABFS_WRITE_REQUEST_SIZE: "8388608"
+  ABFS_WRITE_MAX_CONCURRENT: "48"
+  KAFKA_RECEIVE_BUFFER_BYTES: "10485760"
+  KAFKA_FETCH_MIN_BYTES: "1"
+  KAFKA_FETCH_MAX_WAIT_MS: "500"
+  KAFKA_REQUEST_TIMEOUT_MS: "120000"
+  KAFKA_SESSION_TIMEOUT_MS: "60000"
+
 services:
   producer-csharp:
     build: ./src/containers/producer-csharp
@@ -97,8 +111,32 @@ services:
       DELTA_TABLE_PATH: spark42/benchmark
       CHECKPOINT_PATH: "/tmp/spark-checkpoint"
 
+  flink-consumer-116:
+    build: ./src/containers/flink-consumer
+    cpus: 32
+    mem_limit: 128g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 120
+      start_period: 30s
+    environment:
+      <<: *flink-tuning
+      JAVA_TOOL_OPTIONS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -Xmx80g -Xms80g -XX:G1HeapRegionSize=16m -XX:ParallelGCThreads=8 -XX:ConcGCThreads=4"
+      EVENTHUB_CONNECTION_STRING: ${EVENTHUB_CONNECTION_STRING}
+      EVENTHUB_NAME: ${EVENTHUB_NAME}
+      ADLSG2_ACCOUNT_NAME: ${ADLSG2_ACCOUNT_NAME}
+      ADLSG2_ACCOUNT_KEY: ${ADLSG2_ACCOUNT_KEY}
+      ADLSG2_CONTAINER: ${ADLSG2_CONTAINER}
+      CONSUMER_GROUP: flink116
+      DELTA_TABLE_PATH: flink1.16/benchmark
+      CHECKPOINT_PATH: "/tmp/flink-checkpoint"
+
   analytics-pyspark:
     build: ./src/containers/analytics-pyspark
+    cpus: 32
+    mem_limit: 128g
     volumes:
       - ./results:/opt/results
     environment:
@@ -107,3 +145,5 @@ services:
       - ADLSG2_CONTAINER
       - DELTA_TABLE_PATH_35=spark35/benchmark
       - DELTA_TABLE_PATH_42=spark42/benchmark
+      - DELTA_TABLE_PATH_FLINK116=flink1.16/benchmark
+      - SPARK_DRIVER_MEMORY=64g

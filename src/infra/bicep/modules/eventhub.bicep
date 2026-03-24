@@ -71,6 +71,11 @@ resource cgSpark42 'Microsoft.EventHub/namespaces/eventhubs/consumergroups@2024-
   name: 'spark42'
 }
 
+resource cgFlink16 'Microsoft.EventHub/namespaces/eventhubs/consumergroups@2024-01-01' = {
+  parent: eventHub
+  name: 'flink116'
+}
+
 // ── Outputs ──────────────────────────────────────────────────────
 output namespaceName string = ehNamespace.name
 output eventHubName string = eventHub.name

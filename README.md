@@ -8,6 +8,7 @@ graph LR
         P[Producer<br/><i>C# .NET</i>]
         S35[Spark Consumer<br/><i>Spark 3.5 / Scala 2.12</i>]
         S42[Spark Consumer<br/><i>Spark 4.2 / Scala 2.13</i>]
+        F116[Flink Consumer<br/><i>Flink 1.16 / Java 17</i>]
         A[Analytics<br/><i>PySpark</i>]
     end
 
@@ -16,9 +17,11 @@ graph LR
 
     P -- "produce msgs" --> EH
     EH -- "consumer group: spark35" --> S35
+    EH -- "consumer group: flink116" --> F116
     EH -- "consumer group: spark42" --> S42
-    S35 -- "write Delta" --> ADLS
-    S42 -- "write Delta" --> ADLS
+    S35 -- "write Delta<br/>spark35/" --> ADLS
+    S42 -- "write Delta<br/>spark42/" --> ADLS
+    F116 -- "write Delta<br/>flink1.16/" --> ADLS
     ADLS -- "read Delta" --> A
     A -- "latency &<br/>throughput charts" --> R[results/]
 ```
