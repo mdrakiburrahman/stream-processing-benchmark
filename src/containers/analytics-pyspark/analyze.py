@@ -91,7 +91,16 @@ def main():
             continue
         label = series["version"].iloc[0]
         ax_lat.plot(series["elapsed_s"], series["latency_s"], color=color, label=label, linewidth=1.8, alpha=0.85)
+        avg_lat = series["latency_s"].mean()
+        ax_lat.axhline(y=avg_lat, color=color, linestyle="--", alpha=0.10, linewidth=2)
+        ax_lat.text(series["elapsed_s"].iloc[-1], avg_lat, f" {label} avg: {avg_lat:.2f}s",
+                    color=color, alpha=0.6, fontsize=9, va="bottom")
+
         ax_thr.plot(series["elapsed_s"], series["msg_count"], color=color, label=label, linewidth=1.8, alpha=0.85)
+        avg_thr = series["msg_count"].mean()
+        ax_thr.axhline(y=avg_thr, color=color, linestyle="--", alpha=0.10, linewidth=2)
+        ax_thr.text(series["elapsed_s"].iloc[-1], avg_thr, f" {label} avg: {avg_thr:,.0f}",
+                    color=color, alpha=0.6, fontsize=9, va="bottom")
 
     ax_lat.set_ylabel("Latency (s)")
     ax_lat.set_title("E2E Latency: Spark 3.5 vs Spark 4.2 vs Flink 1.16")
