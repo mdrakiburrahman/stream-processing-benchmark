@@ -24,6 +24,7 @@ fi
 
 LOCATION="westcentralus"
 SUFFIX=$(date +%Y%m%d%H%M%S)
+NUM_CORES=$(nproc)
 BICEP_DIR="src/infra/bicep"
 
 echo "=== Stream Processing Benchmark — Deploy ==="
@@ -31,6 +32,7 @@ echo "Subscription:   $SUBSCRIPTION"
 echo "Resource Group: $RESOURCE_GROUP"
 echo "Location:       $LOCATION"
 echo "Suffix:         $SUFFIX"
+echo "Cores (nproc):  $NUM_CORES"
 echo ""
 
 # ── Verify az CLI login ──────────────────────────────────────────
@@ -56,7 +58,7 @@ az deployment group create \
   --resource-group "$RESOURCE_GROUP" \
   --subscription "$SUBSCRIPTION" \
   --template-file "$BICEP_DIR/main.bicep" \
-  --parameters suffix="$SUFFIX" \
+  --parameters suffix="$SUFFIX" partitionCount=$NUM_CORES \
   --output none
 
 echo "Bicep deployment complete."
@@ -124,6 +126,7 @@ cp "$ENV_TEMPLATE" "$ENV_FILE"
 sed -i "s|{{EVENTHUB_CONNECTION_STRING}}|${EH_CONN_STR}|g" "$ENV_FILE"
 sed -i "s|{{ADLSG2_ACCOUNT_NAME}}|${SA_NAME}|g" "$ENV_FILE"
 sed -i "s|{{ADLSG2_ACCOUNT_KEY}}|${SA_KEY}|g" "$ENV_FILE"
+sed -i "s|{{NUM_CORES}}|${NUM_CORES}|g" "$ENV_FILE"
 
 echo ".env written successfully."
 

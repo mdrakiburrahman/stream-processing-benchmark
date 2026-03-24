@@ -5,6 +5,9 @@ cd "$(git rev-parse --show-toplevel)"
 
 DURATION=${1:-120}
 LOGS_DIR=".logs"
+TEMP_DIR=".temp"
+RESOURCE_CSV="$TEMP_DIR/resource_stats.csv"
+SCRIPT_DIR="src/.scripts"
 
 [[ -f .env ]] || { echo "Error: Copy .env.template to .env and fill in values"; exit 1; }
 source .env
@@ -62,10 +65,19 @@ run_consumer() {
 
   wait_healthy "$consumer"
   wait_healthy producer-csharp
+
+  "$SCRIPT_DIR/monitor-resources.sh" "$RESOURCE_CSV" "$consumer" producer-csharp &
+  monitor_pid=$!
+
   sleep "$DURATION"
 
   docker compose stop "$consumer" producer-csharp
   docker compose rm -f "$consumer" producer-csharp
+
+  if [[ -n "${monitor_pid:-}" ]]; then
+    kill "$monitor_pid" 2>/dev/null || true
+    wait "$monitor_pid" 2>/dev/null || true
+  fi
 
   sleep 2
   kill "$log_pid_consumer" "$log_pid_producer" 2>/dev/null || true
@@ -76,6 +88,10 @@ run_consumer() {
 
 rm -rf "$LOGS_DIR"
 mkdir -p "$LOGS_DIR"
+rm -rf "$TEMP_DIR"
+mkdir -p "$TEMP_DIR"
+
+find results/ -type f ! -name '.gitkeep' -delete 2>/dev/null || true
 
 echo "=== Tearing down any running containers ==="
 docker compose down --remove-orphans 2>/dev/null || true
@@ -84,6 +100,7 @@ echo "=== Cleaning ADLS Gen2 data ==="
 clean_adls_dir flink1.16
 clean_adls_dir spark35
 clean_adls_dir spark42
+clean_adls_dir resource_stats
 echo "ADLS cleaned."
 
 echo "=== Building images ==="
@@ -94,6 +111,20 @@ run_consumer spark-consumer-35 "Run 2"
 run_consumer spark-consumer-42 "Run 3"
 
 docker compose down
+
+echo "=== Uploading resource stats to ADLS ==="
+if [[ -f "$RESOURCE_CSV" ]]; then
+  az storage blob upload \
+    --account-name "$ADLSG2_ACCOUNT_NAME" \
+    --account-key "$ADLSG2_ACCOUNT_KEY" \
+    --container-name "$ADLSG2_CONTAINER" \
+    --name "resource_stats/resource_stats.csv" \
+    --file "$RESOURCE_CSV" \
+    --overwrite 2>/dev/null
+  echo "Resource stats uploaded."
+else
+  echo "WARNING: No resource stats CSV found at $RESOURCE_CSV"
+fi
 
 echo "=== Running analytics ==="
 docker compose up analytics-pyspark 2>&1 | tee "$LOGS_DIR/analytics-pyspark.log"
