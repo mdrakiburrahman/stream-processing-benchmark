@@ -101,6 +101,7 @@ clean_adls_dir flink1.16
 clean_adls_dir spark35
 clean_adls_dir spark42
 clean_adls_dir resource_stats
+clean_adls_dir feldera
 echo "ADLS cleaned."
 
 echo "=== Building images ==="
@@ -109,6 +110,7 @@ docker compose build
 run_consumer flink-consumer-116 "Run 1"
 run_consumer spark-consumer-35 "Run 2"
 run_consumer spark-consumer-42 "Run 3"
+run_consumer feldera-consumer "Run 4"
 
 docker compose down
 

@@ -15,6 +15,7 @@ CONTAINER_LABELS = {
     "spark-consumer-35": "Spark 3.5",
     "spark-consumer-42": "Spark 4.2",
     "flink-consumer-116": "Flink 1.16",
+    "feldera-consumer": "Feldera",
 }
 
 CONTAINER_COLORS = {
@@ -22,6 +23,7 @@ CONTAINER_COLORS = {
     "spark-consumer-35": "blue",
     "spark-consumer-42": "red",
     "flink-consumer-116": "green",
+    "feldera-consumer": "purple",
 }
 
 
@@ -70,6 +72,60 @@ def load_timeseries(spark, delta_path, label):
     return pdf
 
 
+def load_timeseries_feldera(spark, delta_path, label):
+    """Read Feldera Delta table, compute latency from file metadata, return Pandas.
+    
+    Feldera uses IVM so NOW()-based latency is not viable. Instead, we use the
+    Parquet file modification time as a proxy for when the row was written.
+    The Feldera Delta output also contains __feldera_op and __feldera_ts columns.
+    """
+    from pyspark.sql import functions as F
+
+    try:
+        df = spark.read.format("delta").load(delta_path)
+        if not df.head(1):
+            print(f"WARNING: {label} Delta table is empty, skipping.")
+            return None
+    except Exception as e:
+        print(f"WARNING: Could not read {label} at {delta_path}: {e}")
+        return None
+
+    # Filter for insert operations only (Feldera Delta output includes deletes/updates)
+    if "__feldera_op" in [f.name for f in df.schema.fields]:
+        df = df.filter(F.col("__feldera_op") == "i")
+
+    # Handle ts as either TIMESTAMP or VARCHAR
+    ts_type = [f for f in df.schema.fields if f.name == "ts"][0].dataType.typeName()
+    if ts_type == "string":
+        df = df.withColumn("ts", F.to_timestamp(F.col("ts")))
+
+    # Use file modification time as proxy for consumer processing time
+    df = df.select(
+        F.col("ts"),
+        F.col("_metadata.file_modification_time").alias("file_mod_time")
+    )
+
+    # Compute latency: file write time - producer timestamp
+    df = df.withColumn(
+        "latency_ms",
+        ((F.col("file_mod_time").cast("double") - F.col("ts").cast("double")) * 1000).cast("long")
+    )
+
+    min_ts = df.agg(F.min("ts")).collect()[0][0]
+    binned = (
+        df.withColumn("elapsed_s",
+            F.floor((F.col("ts").cast("double") - F.lit(min_ts).cast("double"))).cast("int"))
+        .withColumn("latency_s", F.col("latency_ms") / 1000.0)
+        .groupBy("elapsed_s")
+        .agg(F.avg("latency_s").alias("latency_s"), F.count("*").alias("msg_count"))
+        .orderBy("elapsed_s")
+    )
+
+    pdf = binned.toPandas()
+    pdf["version"] = label
+    return pdf
+
+
 def load_resource_stats(spark, abfs_base, resource_path):
     """Read resource stats CSV from ADLS, return Pandas DataFrame."""
     full_path = f"{abfs_base}/{resource_path}"
@@ -100,16 +156,18 @@ def main():
     path_42      = os.environ.get("DELTA_TABLE_PATH_42", "spark42/benchmark")
     path_flink116 = os.environ.get("DELTA_TABLE_PATH_FLINK116", "flink1.16/benchmark")
     resource_path = os.environ.get("RESOURCE_STATS_PATH", "resource_stats/resource_stats.csv")
+    path_feldera  = os.environ.get("DELTA_TABLE_PATH_FELDERA", "feldera/benchmark")
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
     series_35       = load_timeseries(spark, f"{abfs_base}/{path_35}", "Spark 3.5")
     series_42       = load_timeseries(spark, f"{abfs_base}/{path_42}", "Spark 4.2")
     series_flink116 = load_timeseries(spark, f"{abfs_base}/{path_flink116}", "Flink 1.16")
+    series_feldera  = load_timeseries_feldera(spark, f"{abfs_base}/{path_feldera}", "Feldera")
     resource_stats  = load_resource_stats(spark, abfs_base, resource_path)
     spark.stop()
 
-    all_series = [series_35, series_42, series_flink116]
+    all_series = [series_35, series_42, series_flink116, series_feldera]
     if all(s is None for s in all_series):
         print("ERROR: No data available. Exiting.")
         sys.exit(1)
@@ -128,7 +186,7 @@ def main():
         ax_lat, ax_thr, ax_cpu, ax_mem, ax_net_in, ax_net_out = axes
 
     # ── Latency panel ─────────────────────────────────────────────
-    for series, color in [(series_35, "blue"), (series_42, "red"), (series_flink116, "green")]:
+    for series, color in [(series_35, "blue"), (series_42, "red"), (series_flink116, "green"), (series_feldera, "purple")]:
         if series is None:
             continue
         label = series["version"].iloc[0]
@@ -145,13 +203,13 @@ def main():
                     color=color, alpha=0.6, fontsize=9, va="bottom")
 
     ax_lat.set_ylabel("Latency (s)")
-    ax_lat.set_title("E2E Latency: Spark 3.5 vs Spark 4.2 vs Flink 1.16")
+    ax_lat.set_title("E2E Latency: Spark 3.5 vs Spark 4.2 vs Flink 1.16 vs Feldera")
     ax_lat.legend(fontsize=12)
     ax_lat.grid(True, alpha=0.3)
 
     ax_thr.set_xlabel("Elapsed Time (seconds since first message)")
     ax_thr.set_ylabel("Messages / second")
-    ax_thr.set_title("Throughput: Spark 3.5 vs Spark 4.2 vs Flink 1.16")
+    ax_thr.set_title("Throughput: Spark 3.5 vs Spark 4.2 vs Flink 1.16 vs Feldera")
     ax_thr.legend(fontsize=12)
     ax_thr.grid(True, alpha=0.3)
 
