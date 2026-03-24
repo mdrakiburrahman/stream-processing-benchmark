@@ -26,7 +26,7 @@ Iterative tuning loop to achieve **< 5 second sustained latency** in Apache Spar
 1. `docker-compose.yml` — tuning knobs in `x-spark-tuning` and `x-flink-tuning`, per-service env vars, container resources (`cpus`, `mem_limit`)
 2. `src/containers/spark-consumer/src/main/scala/benchmark/StreamConsumer.scala` — Spark/Kafka/Delta configuration
 3. `src/containers/flink-consumer/src/main/java/benchmark/FlinkStreamConsumer.java` — Flink/Kafka/Delta configuration
-4. `src/.scripts/feldera-pipeline.py` — Feldera pipeline SQL program, runtime config, connector config
+4. `src/containers/feldera-consumer/src/main.rs` — Feldera pipeline SQL program, runtime config, connector config
 
 **No magic numbers in application code** — if you tune a hardcoded value in `StreamConsumer.scala` or `FlinkStreamConsumer.java`, you MUST externalize it as an environment variable (Scala: `sys.env.getOrElse("VAR_NAME", "default")`; Java: `env("VAR_NAME", "default")`) and place the default in `docker-compose.yml` under `x-spark-tuning` or `x-flink-tuning` respectively.
 
@@ -69,8 +69,8 @@ Run the benchmark, analyze the latency timeseries for all three consumers (Spark
 ### Feldera Tuning Knobs
 
 * Feldera uses Incremental View Maintenance (IVM) — it processes input changes incrementally rather than reprocessing entire datasets. Latency is driven by Kafka ingestion speed, IVM engine step time, and Delta Lake output flushing.
-* The Feldera pipeline configuration lives in `src/.scripts/feldera-pipeline.py`. Edit the `runtime_config` dict and connector configs there.
-* Key tuning parameters (in `feldera-pipeline.py`):
+* The Feldera pipeline configuration lives in `src/containers/feldera-consumer/src/main.rs`. Edit the `runtime_config` dict and connector configs there.
+* Key tuning parameters (in `main.rs`):
   - `runtime_config.workers` — Number of DBSP worker threads (default 16, sweet spot 4-16)
   - `runtime_config.min_batch_size_records` — Minimum records before processing a batch (default 0)
   - `runtime_config.max_buffering_delay_usecs` — Max delay waiting for batch fill (default 0)

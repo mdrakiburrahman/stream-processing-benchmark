@@ -134,19 +134,23 @@ services:
       CHECKPOINT_PATH: "/tmp/flink-checkpoint"
 
   feldera-consumer:
-    image: images.feldera.com/feldera/pipeline-manager:latest
+    build: ./src/containers/feldera-consumer
     tty: true
     cpus: 32
     mem_limit: 128g
-    ports:
-      - "8090:8080"
-    stop_grace_period: 0s
+    stop_grace_period: 30s
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/healthz || exit 1"]
+      test: ["CMD-SHELL", "test -f /tmp/feldera-healthy"]
       interval: 5s
       timeout: 5s
       retries: 120
-      start_period: 10s
+      start_period: 600s
+    environment:
+      - EVENTHUB_CONNECTION_STRING
+      - EVENTHUB_NAME
+      - ADLSG2_ACCOUNT_NAME
+      - ADLSG2_ACCOUNT_KEY
+      - ADLSG2_CONTAINER
 
   analytics-pyspark:
     build: ./src/containers/analytics-pyspark

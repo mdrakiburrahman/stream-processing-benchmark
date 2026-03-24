@@ -8,8 +8,6 @@ LOGS_DIR=".logs"
 TEMP_DIR=".temp"
 RESOURCE_CSV="$TEMP_DIR/resource_stats.csv"
 SCRIPT_DIR="src/.scripts"
-FELDERA_HOST="http://localhost:8090"
-export FELDERA_HOST
 
 [[ -f .env ]] || { echo "Error: Copy .env.template to .env and fill in values"; exit 1; }
 source .env
@@ -88,48 +86,6 @@ run_consumer() {
   echo "${run_label} complete."
 }
 
-run_feldera() {
-  local run_label=$1
-
-  echo "=== ${run_label}: feldera for ${DURATION}s ==="
-
-  # Wait for Feldera pipeline to be compiled
-  "$SCRIPT_DIR/feldera-pipeline.py" wait-compiled
-
-  docker compose up -d producer-csharp
-  wait_healthy producer-csharp
-
-  docker compose logs -f --no-color feldera-consumer  >> "$LOGS_DIR/feldera-consumer.log" 2>&1 &
-  local log_pid_feldera=$!
-  docker compose logs -f --no-color producer-csharp    >> "$LOGS_DIR/producer-csharp-feldera.log" 2>&1 &
-  local log_pid_producer=$!
-
-  # Start the Feldera pipeline
-  "$SCRIPT_DIR/feldera-pipeline.py" start
-
-  "$SCRIPT_DIR/monitor-resources.sh" "$RESOURCE_CSV" feldera-consumer producer-csharp &
-  monitor_pid=$!
-
-  sleep "$DURATION"
-
-  # Stop the Feldera pipeline
-  "$SCRIPT_DIR/feldera-pipeline.py" stop
-
-  docker compose stop producer-csharp
-  docker compose rm -f producer-csharp
-
-  if [[ -n "${monitor_pid:-}" ]]; then
-    kill "$monitor_pid" 2>/dev/null || true
-    wait "$monitor_pid" 2>/dev/null || true
-  fi
-
-  sleep 2
-  kill "$log_pid_feldera" "$log_pid_producer" 2>/dev/null || true
-  wait "$log_pid_feldera" "$log_pid_producer" 2>/dev/null || true
-
-  echo "${run_label} complete."
-}
-
 rm -rf "$LOGS_DIR"
 mkdir -p "$LOGS_DIR"
 rm -rf "$TEMP_DIR"
@@ -151,20 +107,10 @@ echo "ADLS cleaned."
 echo "=== Building images ==="
 docker compose build
 
-echo "=== Pre-compiling Feldera pipeline ==="
-docker compose up -d feldera-consumer
-wait_healthy feldera-consumer
-"$SCRIPT_DIR/feldera-pipeline.py" create
-echo "Feldera compilation started (runs in parallel with consumer benchmarks)."
-
 run_consumer flink-consumer-116 "Run 1"
 run_consumer spark-consumer-35 "Run 2"
 run_consumer spark-consumer-42 "Run 3"
-
-run_feldera "Run 4"
-
-# Clean up Feldera pipeline
-"$SCRIPT_DIR/feldera-pipeline.py" delete 2>/dev/null || true
+run_consumer feldera-consumer "Run 4"
 
 docker compose down
 
