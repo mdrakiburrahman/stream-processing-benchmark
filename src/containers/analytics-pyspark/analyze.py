@@ -44,44 +44,63 @@ def create_spark_session():
     return configure_spark_with_delta_pip(builder, extra_packages=["org.apache.hadoop:hadoop-azure:3.3.4"]).getOrCreate()
 
 
-def build_commit_timestamp_map(spark, delta_path):
+def build_commit_timestamp_map(spark, delta_path, storage_options):
     """Build a mapping from parquet file name to Delta commit timestamp.
 
-    Reads _delta_log/*.json, correlates commitInfo.timestamp with add.path
-    entries within each log file to determine when each parquet file was
-    committed to the table.
+    Reads _delta_log/*.json directly via fsspec/adlfs (pure Python, no Spark),
+    parsing each JSONL log file for commitInfo.timestamp and add.path entries.
     """
-    from pyspark.sql import functions as F
+    import json
+    import fsspec
+    from pyspark.sql.types import StructType, StructField, StringType, TimestampType
+    import pandas as pd
 
-    log_path = f"{delta_path}/_delta_log/*.json"
-    log_df = spark.read.json(log_path)
-    log_df = log_df.withColumn("_log_file", F.input_file_name())
+    # Convert abfs:// path to container/prefix for adlfs
+    # abfs://container@account.dfs.core.windows.net/path → container, path/_delta_log
+    stripped = delta_path.replace("abfs://", "").replace("abfss://", "")
+    container_and_account, *rest = stripped.split("/", 1)
+    container_name = container_and_account.split("@")[0]
+    prefix = rest[0] if rest else ""
+    log_prefix = f"{prefix}/_delta_log"
 
-    # commitInfo rows contain the commit timestamp (epoch milliseconds)
-    commit_ts = (
-        log_df
-        .filter("commitInfo IS NOT NULL")
-        .select(
-            F.col("_log_file"),
-            (F.col("commitInfo.timestamp") / 1000).cast("timestamp").alias("commit_ts"),
-        )
+    fs = fsspec.filesystem(
+        "abfs",
+        account_name=storage_options["account_name"],
+        account_key=storage_options["account_key"],
     )
 
-    # add rows contain the parquet file path added in that commit
-    file_adds = (
-        log_df
-        .filter("add IS NOT NULL")
-        .select(
-            F.col("_log_file"),
-            F.element_at(F.split(F.col("add.path"), "/"), -1).alias("file_name"),
-        )
+    log_files = sorted(
+        f for f in fs.ls(f"{container_name}/{log_prefix}", detail=False)
+        if f.endswith(".json")
     )
 
-    # Join within same log file to associate each file with its commit time
-    return file_adds.join(commit_ts, "_log_file").select("file_name", "commit_ts")
+    rows = []
+    for log_file in log_files:
+        commit_ts = None
+        files_added = []
+        with fs.open(log_file, "r") as fh:
+            for line in fh:
+                entry = json.loads(line)
+                if "commitInfo" in entry:
+                    ms = entry["commitInfo"]["timestamp"]
+                    commit_ts = pd.Timestamp(ms, unit="ms", tz="UTC").tz_localize(None)
+                if "add" in entry:
+                    path = entry["add"]["path"]
+                    files_added.append(path.rsplit("/", 1)[-1])
+        for f in files_added:
+            rows.append({"file_name": f, "commit_ts": commit_ts})
+
+    if not rows:
+        schema = StructType([
+            StructField("file_name", StringType()),
+            StructField("commit_ts", TimestampType()),
+        ])
+        return spark.createDataFrame([], schema)
+
+    return spark.createDataFrame(pd.DataFrame(rows))
 
 
-def load_timeseries(spark, delta_path, label):
+def load_timeseries(spark, delta_path, label, storage_options):
     """Read Delta table, compute latency from transaction log commit timestamps.
 
     For each row, latency = delta_commit_timestamp - producer_send_timestamp.
@@ -114,7 +133,7 @@ def load_timeseries(spark, delta_path, label):
     )
 
     # Build commit timestamp map from the Delta transaction log
-    commit_map = build_commit_timestamp_map(spark, delta_path)
+    commit_map = build_commit_timestamp_map(spark, delta_path, storage_options)
 
     # Join data rows with their commit timestamps (broadcast the small map)
     df = df.join(F.broadcast(commit_map), "file_name")
@@ -167,8 +186,14 @@ def main():
     spark = create_spark_session()
 
     account_name = os.environ["ADLSG2_ACCOUNT_NAME"]
+    account_key = os.environ["ADLSG2_ACCOUNT_KEY"]
     container = os.environ["ADLSG2_CONTAINER"]
     abfs_base = f"abfs://{container}@{account_name}.dfs.core.windows.net"
+
+    storage_options = {
+        "account_name": account_name,
+        "account_key": account_key,
+    }
 
     path_35      = os.environ.get("DELTA_TABLE_PATH_35", "spark35/benchmark")
     path_42      = os.environ.get("DELTA_TABLE_PATH_42", "spark42/benchmark")
@@ -178,10 +203,10 @@ def main():
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
-    series_35       = load_timeseries(spark, f"{abfs_base}/{path_35}", "Spark 3.5")
-    series_42       = load_timeseries(spark, f"{abfs_base}/{path_42}", "Spark 4.2")
-    series_flink116 = load_timeseries(spark, f"{abfs_base}/{path_flink116}", "Flink 1.16")
-    series_feldera  = load_timeseries(spark, f"{abfs_base}/{path_feldera}", "Feldera")
+    series_35       = load_timeseries(spark, f"{abfs_base}/{path_35}", "Spark 3.5", storage_options)
+    series_42       = load_timeseries(spark, f"{abfs_base}/{path_42}", "Spark 4.2", storage_options)
+    series_flink116 = load_timeseries(spark, f"{abfs_base}/{path_flink116}", "Flink 1.16", storage_options)
+    series_feldera  = load_timeseries(spark, f"{abfs_base}/{path_feldera}", "Feldera", storage_options)
     resource_stats  = load_resource_stats(spark, abfs_base, resource_path)
     spark.stop()
 
