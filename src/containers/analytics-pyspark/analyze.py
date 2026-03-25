@@ -47,8 +47,8 @@ def create_spark_session():
 def build_commit_timestamp_map(spark, delta_path, storage_options):
     """Build a mapping from parquet file name to Delta commit timestamp.
 
-    Reads _delta_log/*.json directly via fsspec/adlfs (pure Python, no Spark),
-    parsing each JSONL log file for commitInfo.timestamp and add.path entries.
+    Reads _delta_log/*.json directly via fsspec/adlfs, parsing each JSONL log file 
+    for commitInfo.timestamp and add.path entries.
     """
     import json
     import fsspec
@@ -116,10 +116,6 @@ def load_timeseries(spark, delta_path, label, storage_options):
     except Exception as e:
         print(f"WARNING: Could not read {label} at {delta_path}: {e}")
         return None
-
-    # Filter for insert operations if an operation type column exists (e.g. IVM output)
-    if "__feldera_op" in [f.name for f in df.schema.fields]:
-        df = df.filter(F.col("__feldera_op") == "i")
 
     # Handle ts as either TIMESTAMP or VARCHAR
     ts_field = [f for f in df.schema.fields if f.name == "ts"]
@@ -233,13 +229,13 @@ def main():
         if series is None:
             continue
         label = series["version"].iloc[0]
-        ax_lat.plot(series["elapsed_s"], series["latency_s"], color=color, label=label, linewidth=1.8, alpha=0.85)
+        ax_lat.plot(series["elapsed_s"], series["latency_s"], color=color, label=label, linewidth=1.8, alpha=0.75)
         avg_lat = series["latency_s"].mean()
         ax_lat.axhline(y=avg_lat, color=color, linestyle="--", alpha=0.10, linewidth=2)
         ax_lat.text(series["elapsed_s"].iloc[-1], avg_lat, f" {label} avg: {avg_lat:.2f}s",
                     color=color, alpha=0.6, fontsize=9, va="bottom")
 
-        ax_thr.plot(series["elapsed_s"], series["msg_count"], color=color, label=label, linewidth=1.8, alpha=0.85)
+        ax_thr.plot(series["elapsed_s"], series["msg_count"], color=color, label=label, linewidth=1.8, alpha=0.75)
         avg_thr = series["msg_count"].mean()
         ax_thr.axhline(y=avg_thr, color=color, linestyle="--", alpha=0.10, linewidth=2)
         ax_thr.text(series["elapsed_s"].iloc[-1], avg_thr, f" {label} avg: {avg_thr:,.0f}",
@@ -263,10 +259,10 @@ def main():
             label = CONTAINER_LABELS.get(cname, cname)
             color = CONTAINER_COLORS.get(cname, "gray")
 
-            ax_cpu.plot(cdata["elapsed_s"], cdata["cpu_pct"], color=color, label=label, linewidth=1.5, alpha=0.85)
-            ax_mem.plot(cdata["elapsed_s"], cdata["mem_mb"], color=color, label=label, linewidth=1.5, alpha=0.85)
-            ax_net_in.plot(cdata["elapsed_s"], cdata["net_in_mb"], color=color, label=label, linewidth=1.5, alpha=0.85)
-            ax_net_out.plot(cdata["elapsed_s"], cdata["net_out_mb"], color=color, label=label, linewidth=1.5, alpha=0.85)
+            ax_cpu.plot(cdata["elapsed_s"], cdata["cpu_pct"], color=color, label=label, linewidth=1.5, alpha=0.75)
+            ax_mem.plot(cdata["elapsed_s"], cdata["mem_mb"], color=color, label=label, linewidth=1.5, alpha=0.75)
+            ax_net_in.plot(cdata["elapsed_s"], cdata["net_in_mb"], color=color, label=label, linewidth=1.5, alpha=0.75)
+            ax_net_out.plot(cdata["elapsed_s"], cdata["net_out_mb"], color=color, label=label, linewidth=1.5, alpha=0.75)
 
         ax_cpu.set_ylabel("CPU %")
         ax_cpu.set_title("CPU Usage per Container")
