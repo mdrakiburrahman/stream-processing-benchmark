@@ -17,7 +17,7 @@ import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.TimestampData;
 import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
-import org.apache.flink.table.types.logical.BigIntType;
+
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.table.types.logical.TimestampType;
 
@@ -138,8 +138,7 @@ public class FlinkStreamConsumer {
 
         // ── Delta output schema ────────────────────────────────────────
         RowType rowType = new RowType(Arrays.asList(
-                new RowType.RowField("ts", new TimestampType(3)),
-                new RowType.RowField("latency_ms", new BigIntType())
+                new RowType.RowField("ts", new TimestampType(3))
         ));
 
         // ── Processing pipeline ────────────────────────────────────────
@@ -171,7 +170,7 @@ public class FlinkStreamConsumer {
         flink.execute("Flink Stream Consumer Benchmark");
     }
 
-    // ── Map function: JSON → RowData(ts, latency_ms) ──────────────────
+    // ── Map function: JSON → RowData(ts) ──────────────────────────────
     public static class JsonToRowDataMapper extends RichMapFunction<String, RowData> {
         private transient ObjectMapper mapper;
         private transient long count;
@@ -193,11 +192,8 @@ public class FlinkStreamConsumer {
             // C# "O" format: 2024-01-15T10:30:45.1234567Z
             OffsetDateTime odt = OffsetDateTime.parse(tsStr);
             long tsEpochMs = odt.toInstant().toEpochMilli();
-            long latencyMs = System.currentTimeMillis() - tsEpochMs;
-
-            GenericRowData row = new GenericRowData(2);
+            GenericRowData row = new GenericRowData(1);
             row.setField(0, TimestampData.fromEpochMillis(tsEpochMs));
-            row.setField(1, latencyMs);
             return row;
         }
     }

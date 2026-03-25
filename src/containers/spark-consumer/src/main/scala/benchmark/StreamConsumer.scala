@@ -173,8 +173,7 @@ object StreamConsumer {
       .select(from_json(col("json_str"), schema).as("data"))
       .select(col("data.ts").as("ts_str"))
       .withColumn("ts", to_timestamp(col("ts_str")))
-      .withColumn("latency_ms", ((current_timestamp().cast("double") - col("ts").cast("double")) * 1000).cast("long"))
-      .select("ts", "latency_ms")
+      .select("ts")
 
     parsed.coalesce(outputCoalescePartitions).writeStream
       .format("delta")

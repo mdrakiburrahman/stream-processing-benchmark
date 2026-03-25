@@ -44,40 +44,48 @@ def create_spark_session():
     return configure_spark_with_delta_pip(builder, extra_packages=["org.apache.hadoop:hadoop-azure:3.3.4"]).getOrCreate()
 
 
-def load_timeseries(spark, delta_path, label):
-    """Read Delta table, aggregate to 1-second bins in Spark, return Pandas."""
+def build_commit_timestamp_map(spark, delta_path):
+    """Build a mapping from parquet file name to Delta commit timestamp.
+
+    Reads _delta_log/*.json, correlates commitInfo.timestamp with add.path
+    entries within each log file to determine when each parquet file was
+    committed to the table.
+    """
     from pyspark.sql import functions as F
 
-    try:
-        df = spark.read.format("delta").load(delta_path)
-        if not df.head(1):
-            print(f"WARNING: {label} Delta table is empty, skipping.")
-            return None
-    except Exception as e:
-        print(f"WARNING: Could not read {label} at {delta_path}: {e}")
-        return None
+    log_path = f"{delta_path}/_delta_log/*.json"
+    log_df = spark.read.json(log_path)
+    log_df = log_df.withColumn("_log_file", F.input_file_name())
 
-    min_ts = df.agg(F.min("ts")).collect()[0][0]
-    binned = (
-        df.withColumn("elapsed_s",
-            F.floor((F.col("ts").cast("double") - F.lit(min_ts).cast("double"))).cast("int"))
-        .withColumn("latency_s", F.col("latency_ms") / 1000.0)
-        .groupBy("elapsed_s")
-        .agg(F.avg("latency_s").alias("latency_s"), F.count("*").alias("msg_count"))
-        .orderBy("elapsed_s")
+    # commitInfo rows contain the commit timestamp (epoch milliseconds)
+    commit_ts = (
+        log_df
+        .filter("commitInfo IS NOT NULL")
+        .select(
+            F.col("_log_file"),
+            (F.col("commitInfo.timestamp") / 1000).cast("timestamp").alias("commit_ts"),
+        )
     )
 
-    pdf = binned.toPandas()
-    pdf["version"] = label
-    return pdf
+    # add rows contain the parquet file path added in that commit
+    file_adds = (
+        log_df
+        .filter("add IS NOT NULL")
+        .select(
+            F.col("_log_file"),
+            F.element_at(F.split(F.col("add.path"), "/"), -1).alias("file_name"),
+        )
+    )
+
+    # Join within same log file to associate each file with its commit time
+    return file_adds.join(commit_ts, "_log_file").select("file_name", "commit_ts")
 
 
-def load_timeseries_feldera(spark, delta_path, label):
-    """Read Feldera Delta table, compute latency from file metadata, return Pandas.
-    
-    Feldera uses IVM so NOW()-based latency is not viable. Instead, we use the
-    Parquet file modification time as a proxy for when the row was written.
-    The Feldera Delta output also contains __feldera_op and __feldera_ts columns.
+def load_timeseries(spark, delta_path, label):
+    """Read Delta table, compute latency from transaction log commit timestamps.
+
+    For each row, latency = delta_commit_timestamp - producer_send_timestamp.
+    This is uniform across all consumers (Spark, Flink, Feldera).
     """
     from pyspark.sql import functions as F
 
@@ -90,31 +98,41 @@ def load_timeseries_feldera(spark, delta_path, label):
         print(f"WARNING: Could not read {label} at {delta_path}: {e}")
         return None
 
-    # Filter for insert operations only (Feldera Delta output includes deletes/updates)
+    # Filter for insert operations if an operation type column exists (e.g. IVM output)
     if "__feldera_op" in [f.name for f in df.schema.fields]:
         df = df.filter(F.col("__feldera_op") == "i")
 
     # Handle ts as either TIMESTAMP or VARCHAR
-    ts_type = [f for f in df.schema.fields if f.name == "ts"][0].dataType.typeName()
-    if ts_type == "string":
+    ts_field = [f for f in df.schema.fields if f.name == "ts"]
+    if ts_field and ts_field[0].dataType.typeName() == "string":
         df = df.withColumn("ts", F.to_timestamp(F.col("ts")))
 
-    # Use file modification time as proxy for consumer processing time
+    # Select ts and the parquet file name from metadata
     df = df.select(
         F.col("ts"),
-        F.col("_metadata.file_modification_time").alias("file_mod_time")
+        F.col("_metadata.file_name").alias("file_name"),
     )
 
-    # Compute latency: file write time - producer timestamp
+    # Build commit timestamp map from the Delta transaction log
+    commit_map = build_commit_timestamp_map(spark, delta_path)
+
+    # Join data rows with their commit timestamps (broadcast the small map)
+    df = df.join(F.broadcast(commit_map), "file_name")
+
+    # Compute latency: time from producer send to Delta commit
     df = df.withColumn(
         "latency_ms",
-        ((F.col("file_mod_time").cast("double") - F.col("ts").cast("double")) * 1000).cast("long")
+        ((F.col("commit_ts").cast("double") - F.col("ts").cast("double")) * 1000).cast("long"),
     )
 
     min_ts = df.agg(F.min("ts")).collect()[0][0]
     binned = (
-        df.withColumn("elapsed_s",
-            F.floor((F.col("ts").cast("double") - F.lit(min_ts).cast("double"))).cast("int"))
+        df.withColumn(
+            "elapsed_s",
+            F.floor(
+                (F.col("ts").cast("double") - F.lit(min_ts).cast("double"))
+            ).cast("int"),
+        )
         .withColumn("latency_s", F.col("latency_ms") / 1000.0)
         .groupBy("elapsed_s")
         .agg(F.avg("latency_s").alias("latency_s"), F.count("*").alias("msg_count"))
@@ -163,7 +181,7 @@ def main():
     series_35       = load_timeseries(spark, f"{abfs_base}/{path_35}", "Spark 3.5")
     series_42       = load_timeseries(spark, f"{abfs_base}/{path_42}", "Spark 4.2")
     series_flink116 = load_timeseries(spark, f"{abfs_base}/{path_flink116}", "Flink 1.16")
-    series_feldera  = load_timeseries_feldera(spark, f"{abfs_base}/{path_feldera}", "Feldera")
+    series_feldera  = load_timeseries(spark, f"{abfs_base}/{path_feldera}", "Feldera")
     resource_stats  = load_resource_stats(spark, abfs_base, resource_path)
     spark.stop()
 
