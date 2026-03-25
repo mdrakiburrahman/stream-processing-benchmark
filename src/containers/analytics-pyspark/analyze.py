@@ -44,40 +44,67 @@ def create_spark_session():
     return configure_spark_with_delta_pip(builder, extra_packages=["org.apache.hadoop:hadoop-azure:3.3.4"]).getOrCreate()
 
 
-def load_timeseries(spark, delta_path, label):
-    """Read Delta table, aggregate to 1-second bins in Spark, return Pandas."""
-    from pyspark.sql import functions as F
+def build_commit_timestamp_map(spark, delta_path, storage_options):
+    """Build a mapping from parquet file name to Delta commit timestamp.
 
-    try:
-        df = spark.read.format("delta").load(delta_path)
-        if not df.head(1):
-            print(f"WARNING: {label} Delta table is empty, skipping.")
-            return None
-    except Exception as e:
-        print(f"WARNING: Could not read {label} at {delta_path}: {e}")
-        return None
+    Reads _delta_log/*.json directly via fsspec/adlfs, parsing each JSONL log file 
+    for commitInfo.timestamp and add.path entries.
+    """
+    import json
+    import fsspec
+    from pyspark.sql.types import StructType, StructField, StringType, TimestampType
+    import pandas as pd
 
-    min_ts = df.agg(F.min("ts")).collect()[0][0]
-    binned = (
-        df.withColumn("elapsed_s",
-            F.floor((F.col("ts").cast("double") - F.lit(min_ts).cast("double"))).cast("int"))
-        .withColumn("latency_s", F.col("latency_ms") / 1000.0)
-        .groupBy("elapsed_s")
-        .agg(F.avg("latency_s").alias("latency_s"), F.count("*").alias("msg_count"))
-        .orderBy("elapsed_s")
+    # Convert abfs:// path to container/prefix for adlfs
+    # abfs://container@account.dfs.core.windows.net/path → container, path/_delta_log
+    stripped = delta_path.replace("abfs://", "").replace("abfss://", "")
+    container_and_account, *rest = stripped.split("/", 1)
+    container_name = container_and_account.split("@")[0]
+    prefix = rest[0] if rest else ""
+    log_prefix = f"{prefix}/_delta_log"
+
+    fs = fsspec.filesystem(
+        "abfs",
+        account_name=storage_options["account_name"],
+        account_key=storage_options["account_key"],
     )
 
-    pdf = binned.toPandas()
-    pdf["version"] = label
-    return pdf
+    log_files = sorted(
+        f for f in fs.ls(f"{container_name}/{log_prefix}", detail=False)
+        if f.endswith(".json")
+    )
+
+    rows = []
+    for log_file in log_files:
+        commit_ts = None
+        files_added = []
+        with fs.open(log_file, "r") as fh:
+            for line in fh:
+                entry = json.loads(line)
+                if "commitInfo" in entry:
+                    ms = entry["commitInfo"]["timestamp"]
+                    commit_ts = pd.Timestamp(ms, unit="ms", tz="UTC").tz_localize(None)
+                if "add" in entry:
+                    path = entry["add"]["path"]
+                    files_added.append(path.rsplit("/", 1)[-1])
+        for f in files_added:
+            rows.append({"file_name": f, "commit_ts": commit_ts})
+
+    if not rows:
+        schema = StructType([
+            StructField("file_name", StringType()),
+            StructField("commit_ts", TimestampType()),
+        ])
+        return spark.createDataFrame([], schema)
+
+    return spark.createDataFrame(pd.DataFrame(rows))
 
 
-def load_timeseries_feldera(spark, delta_path, label):
-    """Read Feldera Delta table, compute latency from file metadata, return Pandas.
-    
-    Feldera uses IVM so NOW()-based latency is not viable. Instead, we use the
-    Parquet file modification time as a proxy for when the row was written.
-    The Feldera Delta output also contains __feldera_op and __feldera_ts columns.
+def load_timeseries(spark, delta_path, label, storage_options):
+    """Read Delta table, compute latency from transaction log commit timestamps.
+
+    For each row, latency = delta_commit_timestamp - producer_send_timestamp.
+    This is uniform across all consumers (Spark, Flink, Feldera).
     """
     from pyspark.sql import functions as F
 
@@ -90,31 +117,37 @@ def load_timeseries_feldera(spark, delta_path, label):
         print(f"WARNING: Could not read {label} at {delta_path}: {e}")
         return None
 
-    # Filter for insert operations only (Feldera Delta output includes deletes/updates)
-    if "__feldera_op" in [f.name for f in df.schema.fields]:
-        df = df.filter(F.col("__feldera_op") == "i")
-
     # Handle ts as either TIMESTAMP or VARCHAR
-    ts_type = [f for f in df.schema.fields if f.name == "ts"][0].dataType.typeName()
-    if ts_type == "string":
+    ts_field = [f for f in df.schema.fields if f.name == "ts"]
+    if ts_field and ts_field[0].dataType.typeName() == "string":
         df = df.withColumn("ts", F.to_timestamp(F.col("ts")))
 
-    # Use file modification time as proxy for consumer processing time
+    # Select ts and the parquet file name from metadata
     df = df.select(
         F.col("ts"),
-        F.col("_metadata.file_modification_time").alias("file_mod_time")
+        F.col("_metadata.file_name").alias("file_name"),
     )
 
-    # Compute latency: file write time - producer timestamp
+    # Build commit timestamp map from the Delta transaction log
+    commit_map = build_commit_timestamp_map(spark, delta_path, storage_options)
+
+    # Join data rows with their commit timestamps (broadcast the small map)
+    df = df.join(F.broadcast(commit_map), "file_name")
+
+    # Compute latency: time from producer send to Delta commit
     df = df.withColumn(
         "latency_ms",
-        ((F.col("file_mod_time").cast("double") - F.col("ts").cast("double")) * 1000).cast("long")
+        ((F.col("commit_ts").cast("double") - F.col("ts").cast("double")) * 1000).cast("long"),
     )
 
     min_ts = df.agg(F.min("ts")).collect()[0][0]
     binned = (
-        df.withColumn("elapsed_s",
-            F.floor((F.col("ts").cast("double") - F.lit(min_ts).cast("double"))).cast("int"))
+        df.withColumn(
+            "elapsed_s",
+            F.floor(
+                (F.col("ts").cast("double") - F.lit(min_ts).cast("double"))
+            ).cast("int"),
+        )
         .withColumn("latency_s", F.col("latency_ms") / 1000.0)
         .groupBy("elapsed_s")
         .agg(F.avg("latency_s").alias("latency_s"), F.count("*").alias("msg_count"))
@@ -149,8 +182,14 @@ def main():
     spark = create_spark_session()
 
     account_name = os.environ["ADLSG2_ACCOUNT_NAME"]
+    account_key = os.environ["ADLSG2_ACCOUNT_KEY"]
     container = os.environ["ADLSG2_CONTAINER"]
     abfs_base = f"abfs://{container}@{account_name}.dfs.core.windows.net"
+
+    storage_options = {
+        "account_name": account_name,
+        "account_key": account_key,
+    }
 
     path_35      = os.environ.get("DELTA_TABLE_PATH_35", "spark35/benchmark")
     path_42      = os.environ.get("DELTA_TABLE_PATH_42", "spark42/benchmark")
@@ -160,10 +199,10 @@ def main():
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
-    series_35       = load_timeseries(spark, f"{abfs_base}/{path_35}", "Spark 3.5")
-    series_42       = load_timeseries(spark, f"{abfs_base}/{path_42}", "Spark 4.2")
-    series_flink116 = load_timeseries(spark, f"{abfs_base}/{path_flink116}", "Flink 1.16")
-    series_feldera  = load_timeseries_feldera(spark, f"{abfs_base}/{path_feldera}", "Feldera")
+    series_35       = load_timeseries(spark, f"{abfs_base}/{path_35}", "Spark 3.5", storage_options)
+    series_42       = load_timeseries(spark, f"{abfs_base}/{path_42}", "Spark 4.2", storage_options)
+    series_flink116 = load_timeseries(spark, f"{abfs_base}/{path_flink116}", "Flink 1.16", storage_options)
+    series_feldera  = load_timeseries(spark, f"{abfs_base}/{path_feldera}", "Feldera", storage_options)
     resource_stats  = load_resource_stats(spark, abfs_base, resource_path)
     spark.stop()
 
@@ -190,13 +229,13 @@ def main():
         if series is None:
             continue
         label = series["version"].iloc[0]
-        ax_lat.plot(series["elapsed_s"], series["latency_s"], color=color, label=label, linewidth=1.8, alpha=0.85)
+        ax_lat.plot(series["elapsed_s"], series["latency_s"], color=color, label=label, linewidth=1.8, alpha=0.75)
         avg_lat = series["latency_s"].mean()
         ax_lat.axhline(y=avg_lat, color=color, linestyle="--", alpha=0.10, linewidth=2)
         ax_lat.text(series["elapsed_s"].iloc[-1], avg_lat, f" {label} avg: {avg_lat:.2f}s",
                     color=color, alpha=0.6, fontsize=9, va="bottom")
 
-        ax_thr.plot(series["elapsed_s"], series["msg_count"], color=color, label=label, linewidth=1.8, alpha=0.85)
+        ax_thr.plot(series["elapsed_s"], series["msg_count"], color=color, label=label, linewidth=1.8, alpha=0.75)
         avg_thr = series["msg_count"].mean()
         ax_thr.axhline(y=avg_thr, color=color, linestyle="--", alpha=0.10, linewidth=2)
         ax_thr.text(series["elapsed_s"].iloc[-1], avg_thr, f" {label} avg: {avg_thr:,.0f}",
@@ -220,10 +259,10 @@ def main():
             label = CONTAINER_LABELS.get(cname, cname)
             color = CONTAINER_COLORS.get(cname, "gray")
 
-            ax_cpu.plot(cdata["elapsed_s"], cdata["cpu_pct"], color=color, label=label, linewidth=1.5, alpha=0.85)
-            ax_mem.plot(cdata["elapsed_s"], cdata["mem_mb"], color=color, label=label, linewidth=1.5, alpha=0.85)
-            ax_net_in.plot(cdata["elapsed_s"], cdata["net_in_mb"], color=color, label=label, linewidth=1.5, alpha=0.85)
-            ax_net_out.plot(cdata["elapsed_s"], cdata["net_out_mb"], color=color, label=label, linewidth=1.5, alpha=0.85)
+            ax_cpu.plot(cdata["elapsed_s"], cdata["cpu_pct"], color=color, label=label, linewidth=1.5, alpha=0.75)
+            ax_mem.plot(cdata["elapsed_s"], cdata["mem_mb"], color=color, label=label, linewidth=1.5, alpha=0.75)
+            ax_net_in.plot(cdata["elapsed_s"], cdata["net_in_mb"], color=color, label=label, linewidth=1.5, alpha=0.75)
+            ax_net_out.plot(cdata["elapsed_s"], cdata["net_out_mb"], color=color, label=label, linewidth=1.5, alpha=0.75)
 
         ax_cpu.set_ylabel("CPU %")
         ax_cpu.set_title("CPU Usage per Container")
