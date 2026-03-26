@@ -1,6 +1,11 @@
 # Stream Processing Benchmark
 
-E2E latency and throughput benchmark:
+This is an E2E **latency** focused, [Open Loop benchmark](https://notpeerreviewed.com/blog/tail-latency/) to see which Consumer engine can rip messages off Kafka and place it in Delta and make it available for readers.
+
+Latency is calculated by taking the Producer sent timestamp, and diffing it from the Delta Transaction log at which point that row became available for Delta Lake readers by the Consumer.
+
+> Note that throughput is bottlenecked by the Producer's ability to send messages over the network. 
+> To truly test throughput, additional machines running the same Producer can be used to stress the lone Consumer that run in the same resource constrained single container environment.
 
 ```mermaid
 graph LR

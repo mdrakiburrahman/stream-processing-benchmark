@@ -64,6 +64,7 @@ object StreamConsumer {
       .config("spark.sql.shuffle.partitions", shufflePartitions)
       .config("spark.sql.parquet.compression.codec", "snappy")
       .config("spark.sql.codegen.wholeStage", codegenEnabled)
+      .config("spark.databricks.delta.properties.defaults.checkpointInterval", "10000000")
       .config("spark.hadoop.fs.azure.enable.flush", "false")
       .config("spark.hadoop.fs.azure.disable.outputstream.flush", "true")
       .config("spark.hadoop.fs.azure.write.max.concurrent.requests", abfsWriteMaxConcurrent)

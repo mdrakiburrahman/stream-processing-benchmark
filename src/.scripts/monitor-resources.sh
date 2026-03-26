@@ -14,7 +14,8 @@ fi
 
 mkdir -p "$(dirname "$OUTPUT_CSV")"
 
-if [[ ! -s "$OUTPUT_CSV" ]]; then
+# Always write header if file is new or missing it (handles partial re-runs)
+if [[ ! -f "$OUTPUT_CSV" ]] || ! head -1 "$OUTPUT_CSV" 2>/dev/null | grep -q "^timestamp,"; then
   echo "timestamp,container,cpu_pct,mem_mb,net_in_mb,net_out_mb" > "$OUTPUT_CSV"
 fi
 

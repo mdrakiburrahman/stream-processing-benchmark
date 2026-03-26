@@ -50,6 +50,8 @@ services:
     environment:
       - EVENTHUB_CONNECTION_STRING
       - EVENTHUB_NAME
+      - SENDER_COUNT=${SENDER_COUNT:-32}
+      - CLIENT_COUNT=${CLIENT_COUNT:-8}
 
   spark-consumer-35:
     build:
