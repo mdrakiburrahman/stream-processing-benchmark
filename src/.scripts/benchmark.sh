@@ -16,23 +16,34 @@ wait_healthy() {
   local service=$1
   echo -n "Waiting for $service to be healthy..."
   while true; do
-    local cid
-    cid=$(docker compose ps -q "$service" 2>/dev/null)
-    if [[ -z "$cid" ]]; then
+    local cids
+    cids=$(docker compose ps -q "$service" 2>/dev/null)
+    if [[ -z "$cids" ]]; then
       echo " FAILED (container not found)"
       echo "ERROR: $service exited before becoming healthy. Check $LOGS_DIR/${service}.log"
       return 1
     fi
-    local state
-    state=$(docker inspect --format='{{.State.Status}}' "$cid" 2>/dev/null || echo "missing")
-    if [[ "$state" == "exited" || "$state" == "dead" || "$state" == "missing" ]]; then
-      echo " FAILED (container $state)"
+    local all_healthy=true
+    local any_failed=false
+    while IFS= read -r cid; do
+      local state
+      state=$(docker inspect --format='{{.State.Status}}' "$cid" 2>/dev/null || echo "missing")
+      if [[ "$state" == "exited" || "$state" == "dead" || "$state" == "missing" ]]; then
+        any_failed=true
+        break
+      fi
+      local health
+      health=$(docker inspect --format='{{.State.Health.Status}}' "$cid" 2>/dev/null || echo "none")
+      if [[ "$health" != "healthy" ]]; then
+        all_healthy=false
+      fi
+    done <<< "$cids"
+    if [[ "$any_failed" == "true" ]]; then
+      echo " FAILED (container exited)"
       echo "ERROR: $service exited before becoming healthy. Check $LOGS_DIR/${service}.log"
       return 1
     fi
-    local health
-    health=$(docker inspect --format='{{.State.Health.Status}}' "$cid" 2>/dev/null || echo "none")
-    if [[ "$health" == "healthy" ]]; then
+    if [[ "$all_healthy" == "true" ]]; then
       echo " ready!"
       return 0
     fi
@@ -102,6 +113,7 @@ clean_adls_dir spark35
 clean_adls_dir spark42
 clean_adls_dir resource_stats
 clean_adls_dir feldera
+clean_adls_dir kdi
 echo "ADLS cleaned."
 
 echo "=== Building images ==="
@@ -111,6 +123,7 @@ run_consumer flink-consumer-116 "Run 1"
 run_consumer spark-consumer-35 "Run 2"
 run_consumer spark-consumer-42 "Run 3"
 run_consumer feldera-consumer "Run 4"
+run_consumer kdi-consumer "Run 5"
 
 docker compose down
 

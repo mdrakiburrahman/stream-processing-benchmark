@@ -16,6 +16,7 @@ CONTAINER_LABELS = {
     "spark-consumer-42": "Spark 4.2",
     "flink-consumer-116": "Flink 1.16",
     "feldera-consumer": "Feldera",
+    "kdi-consumer": "KDI",
 }
 
 CONTAINER_COLORS = {
@@ -24,6 +25,7 @@ CONTAINER_COLORS = {
     "spark-consumer-42": "red",
     "flink-consumer-116": "green",
     "feldera-consumer": "purple",
+    "kdi-consumer": "brown",
 }
 
 
@@ -118,10 +120,12 @@ def load_timeseries(spark, delta_path, label, storage_options):
         print(f"WARNING: Could not read {label} at {delta_path}: {e}")
         return None
 
-    # Handle ts as either TIMESTAMP or VARCHAR
+    # Handle ts as either TIMESTAMP, TIMESTAMP_NTZ, or VARCHAR
     ts_field = [f for f in df.schema.fields if f.name == "ts"]
     if ts_field and ts_field[0].dataType.typeName() == "string":
         df = df.withColumn("ts", F.to_timestamp(F.col("ts")))
+    elif ts_field and ts_field[0].dataType.typeName() == "timestamp_ntz":
+        df = df.withColumn("ts", F.col("ts").cast("timestamp"))
 
     # Select ts and the parquet file name from metadata
     df = df.select(
@@ -205,6 +209,7 @@ def main():
     path_flink116 = os.environ.get("DELTA_TABLE_PATH_FLINK116", "flink1.16/benchmark")
     resource_path = os.environ.get("RESOURCE_STATS_PATH", "resource_stats/resource_stats.csv")
     path_feldera  = os.environ.get("DELTA_TABLE_PATH_FELDERA", "feldera/benchmark")
+    path_kdi      = os.environ.get("DELTA_TABLE_PATH_KDI", "kdi/benchmark")
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
@@ -212,10 +217,11 @@ def main():
     series_42       = load_timeseries(spark, f"{abfs_base}/{path_42}", "Spark 4.2", storage_options)
     series_flink116 = load_timeseries(spark, f"{abfs_base}/{path_flink116}", "Flink 1.16", storage_options)
     series_feldera  = load_timeseries(spark, f"{abfs_base}/{path_feldera}", "Feldera", storage_options)
+    series_kdi      = load_timeseries(spark, f"{abfs_base}/{path_kdi}", "KDI", storage_options)
     resource_stats  = load_resource_stats(spark, abfs_base, resource_path)
     spark.stop()
 
-    all_series = [series_35, series_42, series_flink116, series_feldera]
+    all_series = [series_35, series_42, series_flink116, series_feldera, series_kdi]
     if all(s is None for s in all_series):
         print("ERROR: No data available. Exiting.")
         sys.exit(1)
@@ -234,7 +240,7 @@ def main():
         ax_lat, ax_thr, ax_cpu, ax_mem, ax_net_in, ax_net_out = axes
 
     # ── Latency panel ─────────────────────────────────────────────
-    for series, color in [(series_35, "blue"), (series_42, "red"), (series_flink116, "green"), (series_feldera, "purple")]:
+    for series, color in [(series_35, "blue"), (series_42, "red"), (series_flink116, "green"), (series_feldera, "purple"), (series_kdi, "brown")]:
         if series is None:
             continue
         label = series["version"].iloc[0]
@@ -251,13 +257,13 @@ def main():
                     color=color, alpha=0.6, fontsize=9, va="bottom")
 
     ax_lat.set_ylabel("Latency (s)")
-    ax_lat.set_title("E2E Latency: Spark 3.5 vs Spark 4.2 vs Flink 1.16 vs Feldera")
+    ax_lat.set_title("E2E Latency")
     ax_lat.legend(fontsize=12)
     ax_lat.grid(True, alpha=0.3)
 
     ax_thr.set_xlabel("Elapsed Time (seconds since first message)")
     ax_thr.set_ylabel("Messages / second")
-    ax_thr.set_title("Throughput: Spark 3.5 vs Spark 4.2 vs Flink 1.16 vs Feldera")
+    ax_thr.set_title("Throughput (bottlenecked by producer send rate)")
     ax_thr.legend(fontsize=12)
     ax_thr.grid(True, alpha=0.3)
 
