@@ -40,6 +40,7 @@ def create_spark_session():
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
         .config(f"spark.hadoop.fs.azure.account.key.{account_name}.dfs.core.windows.net", account_key)
+        .config("spark.sql.debug.maxToStringFields", "200")
     )
     return configure_spark_with_delta_pip(builder, extra_packages=["org.apache.hadoop:hadoop-azure:3.3.4"]).getOrCreate()
 
@@ -162,10 +163,18 @@ def load_timeseries(spark, delta_path, label, storage_options):
 def load_resource_stats(spark, abfs_base, resource_path):
     """Read resource stats CSV from ADLS, return Pandas DataFrame."""
     full_path = f"{abfs_base}/{resource_path}"
+    expected_cols = {"timestamp", "container", "cpu_pct", "mem_mb", "net_in_mb", "net_out_mb"}
     try:
         df = spark.read.csv(full_path, header=True, inferSchema=True)
         if not df.head(1):
             print(f"WARNING: Resource stats CSV is empty at {full_path}")
+            return None
+        actual_cols = set(df.columns)
+        missing = expected_cols - actual_cols
+        if missing:
+            print(f"WARNING: Resource stats CSV is missing columns {missing}. "
+                  f"Actual columns: {df.columns}. "
+                  f"The CSV may be missing its header row.")
             return None
         pdf = df.toPandas()
         pdf = pdf[~pdf["container"].str.contains("analytics-pyspark", na=False)]

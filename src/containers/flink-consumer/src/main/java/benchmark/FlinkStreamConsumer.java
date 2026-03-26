@@ -29,6 +29,9 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -146,6 +149,32 @@ public class FlinkStreamConsumer {
                 .fromSource(kafkaSource, WatermarkStrategy.noWatermarks(), "kafka-source")
                 .map(new JsonToRowDataMapper())
                 .returns(InternalTypeInfo.of(rowType));
+
+        // ── Pre-create Delta table with disabled log checkpoints ─────────
+        io.delta.standalone.DeltaLog deltaLog = io.delta.standalone.DeltaLog.forTable(hadoopConf, deltaPath);
+        if (!deltaLog.tableExists()) {
+            System.out.println("[INFO] Pre-creating Delta table with checkpointInterval=10000000");
+            Map<String, String> tableConfig = new HashMap<>();
+            tableConfig.put("delta.checkpointInterval", "10000000");
+            io.delta.standalone.types.StructType schema =
+                    new io.delta.standalone.types.StructType(
+                            new io.delta.standalone.types.StructField[]{
+                                    new io.delta.standalone.types.StructField(
+                                            "ts",
+                                            new io.delta.standalone.types.TimestampType(),
+                                            true)
+                            });
+            io.delta.standalone.actions.Metadata metadata =
+                    io.delta.standalone.actions.Metadata.builder()
+                            .schema(schema)
+                            .configuration(tableConfig)
+                            .build();
+            deltaLog.startTransaction().commit(
+                    Collections.singletonList(metadata),
+                    new io.delta.standalone.Operation(
+                            io.delta.standalone.Operation.Name.CREATE_TABLE),
+                    "Flink Benchmark");
+        }
 
         // ── Delta Lake sink ────────────────────────────────────────────
         DeltaSink<RowData> deltaSink = DeltaSink

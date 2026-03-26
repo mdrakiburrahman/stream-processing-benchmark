@@ -15,15 +15,18 @@ string connectionString = Environment.GetEnvironmentVariable("EVENTHUB_CONNECTIO
 string eventHubName = Environment.GetEnvironmentVariable("EVENTHUB_NAME") ?? "benchmark";
 
 int coreCount = Environment.ProcessorCount;
-Console.WriteLine($"Starting producer with {coreCount} cores targeting '{eventHubName}'");
+int senderCount = int.TryParse(Environment.GetEnvironmentVariable("SENDER_COUNT"), out var sc) && sc > 0 ? sc : coreCount * 8;
+int clientCount = int.TryParse(Environment.GetEnvironmentVariable("CLIENT_COUNT"), out var cc) && cc > 0 ? cc : Math.Max(coreCount, 8);
+
+Console.WriteLine($"Starting producer: {coreCount} cores, {senderCount} senders, {clientCount} AMQP connections targeting '{eventHubName}'");
 
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 AppDomain.CurrentDomain.ProcessExit += (_, _) => cts.Cancel();
 
-// One producer client per core for separate AMQP connections
-var clients = new EventHubProducerClient[coreCount];
-for (int i = 0; i < coreCount; i++)
+// Pool of AMQP connections shared across senders
+var clients = new EventHubProducerClient[clientCount];
+for (int i = 0; i < clientCount; i++)
     clients[i] = new EventHubProducerClient(connectionString, eventHubName);
 
 long totalSent = 0;
@@ -77,28 +80,31 @@ _ = Task.Run(async () =>
 try
 {
     await Parallel.ForEachAsync(
-        Enumerable.Range(0, coreCount),
-        new ParallelOptions { MaxDegreeOfParallelism = coreCount, CancellationToken = cts.Token },
-        async (coreIndex, ct) =>
+        Enumerable.Range(0, senderCount),
+        new ParallelOptions { MaxDegreeOfParallelism = senderCount, CancellationToken = cts.Token },
+        async (senderIndex, ct) =>
         {
-            var client = clients[coreIndex];
+            var client = clients[senderIndex % clientCount];
             long seq = 0;
+
+            // Double-buffer: fill next batch while the current one is in flight
+            Task? pendingSend = null;
+            EventDataBatch? previousBatch = null;
 
             while (!ct.IsCancellationRequested)
             {
-                using EventDataBatch batch = await client.CreateBatchAsync(ct).ConfigureAwait(false);
+                EventDataBatch batch = await client.CreateBatchAsync(ct).ConfigureAwait(false);
 
                 while (!ct.IsCancellationRequested)
                 {
                     var payload = JsonSerializer.SerializeToUtf8Bytes(new
                     {
                         ts = DateTime.UtcNow.ToString("O"),
-                        producer_id = coreIndex,
+                        producer_id = senderIndex,
                         seq
                     });
 
-                    var eventData = new EventData(payload);
-                    if (!batch.TryAdd(eventData))
+                    if (!batch.TryAdd(new EventData(payload)))
                         break;
 
                     seq++;
@@ -106,9 +112,27 @@ try
 
                 if (batch.Count > 0)
                 {
-                    await client.SendAsync(batch, ct).ConfigureAwait(false);
-                    Interlocked.Add(ref totalSent, batch.Count);
+                    if (pendingSend != null)
+                    {
+                        await pendingSend.ConfigureAwait(false);
+                        Interlocked.Add(ref totalSent, previousBatch!.Count);
+                        previousBatch.Dispose();
+                    }
+
+                    previousBatch = batch;
+                    pendingSend = client.SendAsync(batch, ct);
                 }
+                else
+                {
+                    batch.Dispose();
+                }
+            }
+
+            if (pendingSend != null)
+            {
+                await pendingSend.ConfigureAwait(false);
+                Interlocked.Add(ref totalSent, previousBatch!.Count);
+                previousBatch!.Dispose();
             }
         });
 }
